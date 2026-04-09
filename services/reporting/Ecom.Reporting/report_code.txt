@@ -1,0 +1,467 @@
+================================================================================
+    ECOM.REPORTING - COMPLETE REVERSE ENGINEERING & TEACHING WALKTHROUGH
+================================================================================
+    Role: Principal Software Engineer & System Architect
+    Project: Ecom.Reporting Microservice
+    Topic: Deep-Dive Code-Level Explanation
+================================================================================
+
+This document is a complete step-by-step, code-level explanation of the Ecom.Reporting microservice. It is designed to take a developer from "zero to hero" in understanding the architecture, patterns, and logic of this enterprise-grade system.
+
+---
+
+# 📁 STEP 1: COMPLETE PROJECT STRUCTURE
+
+The Ecom.Reporting solution follows Clean Architecture principles, ensuring a separation of concerns that makes the system maintainable, testable, and scalable.
+
+Ecom.Reporting
+├── Ecom.Reporting.API            [Presentation Layer]
+├── Ecom.Reporting.Application    [Business Logic Layer]
+├── Ecom.Reporting.Domain         [Core Domain Layer]
+├── Ecom.Reporting.Infrastructure [Implementation/Data Layer]
+├── Ecom.Reporting.Tests          [Quality Assurance Layer]
+└── Dockerfile                     [Containerization]
+
+### 🔹 Layer Responsibilities:
+
+1.  **Ecom.Reporting.Domain**: 
+    - **Why it exists**: To hold the "Heart of the Application" — business entities and rules.
+    - **Responsibility**: Pure logic, zero dependencies on DB, frameworks, or APIs.
+    - **Dependency Direction**: Inward. No other project depends on anything but the Domain.
+
+2.  **Ecom.Reporting.Application**:
+    - **Why it exists**: To orchestrate business use cases.
+    - **Responsibility**: Defines "What" the system does. Contains Interfaces (abstractions), DTOs, and Services.
+    - **Dependency Direction**: Depends ONLY on the Domain.
+
+3.  **Ecom.Reporting.Infrastructure**:
+    - **Why it exists**: To provide technical implementations (Database, Messaging).
+    - **Responsibility**: Implements the interfaces defined in Application. Handles EF Core, RabbitMQ, etc.
+    - **Dependency Direction**: Depends on Application and Domain.
+
+4.  **Ecom.Reporting.API**:
+    - **Why it exists**: To expose the application via HTTP.
+    - **Responsibility**: Handles routing, controllers, middleware, and entry points.
+    - **Dependency Direction**: Depends on Application and Infrastructure (for Wiring/DI).
+
+5.  **Ecom.Reporting.Tests**:
+    - **Why it exists**: To ensure correctness.
+    - **Responsibility**: Unit and Integration tests.
+
+---
+
+# 📂 STEP 2: FILE-BY-FILE BREAKDOWN
+
+For each file, we extract the code, explain it line-by-line, and provide a real-world analogy.
+
+---
+
+## 🏗️ DOMAIN LAYER (CORE)
+
+### 🔹 File Name: AuditLog.cs
+**Location**: `Ecom.Reporting.Domain/Entities/AuditLog.cs`
+**Purpose**: The central entity representing a recorded event in the system.
+
+**FULL CODE**:
+```csharp
+namespace Ecom.Reporting.Domain.Entities;
+
+public class AuditLog
+{
+    public int Id { get; set; }
+    public string? EntityName { get; set; }
+    public int? EntityId { get; set; }
+    public string? Action { get; set; }
+    public string? EventType { get; set; }
+    public string? SourceService { get; set; }
+    public string? CorrelationId { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+```
+
+**LINE-BY-LINE EXPLANATION**:
+- `public class AuditLog`: Defines a blueprint for an audit record. If removed, the system lacks a way to store "What happened".
+- `public int Id { get; set; }`: The unique fingerprint (Primary Key). Used by DB to fetch specific logs.
+- `public string? EntityName`: Stores the type of object changed (e.g., "Product"). Essential for filtering logs by category.
+- `public int? EntityId`: Stores the specific ID of the object. Vital for tracing the history of a single item.
+- `public string? Action`: The human-readable action (e.g., "Approved"). If removed, you wouldn't know "What" was done.
+- `public string? EventType`: The technical event name (e.g., "product.approved"). Bridges logic to messaging.
+- `public string? SourceService`: Tracks which microservice sent the data. Crucial for debugging "Who triggered this".
+- `public string? CorrelationId`: A unique ID shared across services. If removed, you cannot trace a single transaction across the whole ecosystem.
+- `public DateTime CreatedAt = DateTime.UtcNow`: Records "When". Defaults to UTC to avoid time-zone chaos.
+
+**REAL-WORLD ANALOGY**:
+Think of a **Black Box Flight Recorder**. It doesn't fly the plane; it just records every single switch flip, engine status, and pilot command so investigators can piece together the story later.
+
+---
+
+### 🔹 File Name: AuditAction.cs
+**Location**: `Ecom.Reporting.Domain/Enums/AuditAction.cs`
+**Purpose**: Defines a fixed set of valid actions.
+
+**FULL CODE**:
+```csharp
+namespace Ecom.Reporting.Domain.Enums;
+
+public enum AuditAction
+{
+    Created,
+    Updated,
+    Deleted,
+    Approved,
+    Rejected,
+    Published,
+    Archived,
+    PriceChanged,
+    StockChanged
+}
+```
+
+**LINE-BY-LINE EXPLANATION**:
+- `public enum AuditAction`: A restricted list of words. Prevents developer typos (e.g., typing "Creatted" vs "Created").
+- `Created`, `Updated`...: Each represents a distinct domain state change. If removed, you lose type-safety and standardized naming.
+
+**REAL-WORLD ANALOGY**:
+A **Pre-defined Dropdown Menu** at a hospital. Instead of letting doctors write "Patient feels bad" or "Sick", they choose from "Critical", "Stable", or "Discharged".
+
+---
+
+## ⚙️ APPLICATION LAYER (BUSINESS LOGIC)
+
+### 🔹 File Name: AuditLogDto.cs
+**Location**: `Ecom.Reporting.Application/DTOs/AuditLogDto.cs`
+**Purpose**: A Data Transfer Object to safely move data to the UI/API without exposing the raw Database Entity.
+
+**FULL CODE**:
+```csharp
+namespace Ecom.Reporting.Application.DTOs;
+
+public class AuditLogDto
+{
+    public int Id { get; set; }
+    public string? EntityName { get; set; }
+    public int? EntityId { get; set; }
+    public string? Action { get; set; }
+    public string? EventType { get; set; }
+    public string? SourceService { get; set; }
+    public string? CorrelationId { get; set; }
+    public DateTime CreatedAt { get; set; }
+}
+```
+
+**LINE-BY-LINE EXPLANATION**:
+- Identical properties to `AuditLog`. Why? To decouple. If we change the Database (Entity), the API (DTO) doesn't have to break immediately.
+
+**REAL-WORLD ANALOGY**:
+A **Passport**. It contains some information from the Birth Certificate (Database Entity) but only what is necessary for travel (API response).
+
+---
+
+### 🔹 File Name: IAuditRepository.cs
+**Location**: `Ecom.Reporting.Application/Interfaces/IAuditRepository.cs`
+**Purpose**: An interface that tells the system "I need to perform these DB operations," but doesn't care HOW they are done.
+
+**FULL CODE**:
+```csharp
+using Ecom.Reporting.Domain.Entities;
+namespace Ecom.Reporting.Application.Interfaces;
+
+public interface IAuditRepository
+{
+    Task<IEnumerable<AuditLog>> GetByEntityAsync(string entityName, int entityId);
+    Task<IEnumerable<AuditLog>> GetAllAsync(DateTime? from, DateTime? to);
+    Task AddAsync(AuditLog log);
+    Task<Dictionary<string, int>> GetActionCountsAsync();
+    Task<IEnumerable<AuditLog>> GetFilteredAsync(DateTime? from, DateTime? to, string? reportType, int limit);
+}
+```
+
+**LINE-BY-LINE EXPLANATION**:
+- `Task<...>`: Means the operation is asynchronous (doesn't freeze the app while waiting).
+- `GetByEntityAsync`: Fetches logs for a specific item.
+- `AddAsync`: Saves a new log.
+- **Why this Interface?**: If we switch from SQL Server to MongoDB, we only change the *implementation* in Infrastructure, not the business code here.
+
+**REAL-WORLD ANALOGY**:
+An **Electric Socket Requirement**. You don't care if the power comes from Solar, Coal, or Nuclear; as long as it provides 220V and fits the plug, everything works.
+
+---
+
+### 🔹 File Name: AuditService.cs
+**Location**: `Ecom.Reporting.Application/Services/AuditService.cs`
+**Purpose**: Orchestrates the audit workflows. Maps entities to DTOs.
+
+**FULL CODE**:
+```csharp
+using AutoMapper;
+using Ecom.Reporting.Application.DTOs;
+using Ecom.Reporting.Application.Interfaces;
+using Ecom.Reporting.Domain.Entities;
+
+namespace Ecom.Reporting.Application.Services;
+
+public class AuditService : IAuditService
+{
+    private readonly IAuditRepository _repo;
+    private readonly IMapper _mapper;
+
+    public AuditService(IAuditRepository repo, IMapper mapper)
+    {
+        _repo = repo;
+        _mapper = mapper;
+    }
+
+    public async Task<IEnumerable<AuditLogDto>> GetByProductIdAsync(int productId)
+    {
+        var logs = await _repo.GetByEntityAsync("Product", productId);
+        return _mapper.Map<IEnumerable<AuditLogDto>>(logs);
+    }
+
+    public async Task<IEnumerable<AuditLogDto>> GetAllAsync(DateTime? from, DateTime? to)
+    {
+        var logs = await _repo.GetAllAsync(from, to);
+        return _mapper.Map<IEnumerable<AuditLogDto>>(logs);
+    }
+
+    public async Task WriteAsync(AuditLogDto dto)
+    {
+        var entity = _mapper.Map<AuditLog>(dto);
+        await _repo.AddAsync(entity);
+    }
+}
+```
+
+**LINE-BY-LINE EXPLANATION**:
+- `private readonly ...`: Store dependencies.
+- `_mapper.Map`: Converts Domain Entity to DTO (and vice-versa). Automates the work of copying properties.
+- `WriteAsync`: Takes a DTO from a Consumer, converts it to an Entity, and tells the Repository to save it.
+
+---
+
+## 🛠️ INFRASTRUCTURE LAYER (IMPLEMENTATION)
+
+### 🔹 File Name: AuditRepository.cs
+**Location**: `Ecom.Reporting.Infrastructure/Repositories/AuditRepository.cs`
+**Purpose**: Raw SQL/EF logic to talk to the database.
+
+**FULL CODE**:
+```csharp
+using Ecom.Reporting.Application.Interfaces;
+using Ecom.Reporting.Domain.Entities;
+using Ecom.Reporting.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
+
+namespace Ecom.Reporting.Infrastructure.Repositories;
+
+public class AuditRepository : IAuditRepository
+{
+    private readonly ReportingDbContext _context;
+
+    public AuditRepository(ReportingDbContext context) => _context = context;
+
+    public async Task<IEnumerable<AuditLog>> GetByEntityAsync(string entityName, int entityId) =>
+        await _context.AuditLogs
+            .Where(a => a.EntityName == entityName && a.EntityId == entityId)
+            .OrderByDescending(a => a.CreatedAt)
+            .ToListAsync();
+
+    public async Task<IEnumerable<AuditLog>> GetAllAsync(DateTime? from, DateTime? to)
+    {
+        var query = _context.AuditLogs.AsQueryable();
+        if (from.HasValue) query = query.Where(a => a.CreatedAt >= from.Value);
+        if (to.HasValue) query = query.Where(a => a.CreatedAt <= to.Value);
+        return await query.OrderByDescending(a => a.CreatedAt).ToListAsync();
+    }
+
+    public async Task AddAsync(AuditLog log)
+    {
+        await _context.AuditLogs.AddAsync(log);
+        await _context.SaveChangesAsync();
+    }
+
+    public async Task<Dictionary<string, int>> GetActionCountsAsync()
+    {
+        return await _context.AuditLogs
+            .GroupBy(a => a.Action)
+            .Select(g => new { Action = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.Action ?? "Unknown", x => x.Count);
+    }
+
+    public async Task<IEnumerable<AuditLog>> GetFilteredAsync(DateTime? from, DateTime? to, string? reportType, int limit)
+    {
+        var query = _context.AuditLogs.AsQueryable();
+        if (from.HasValue) query = query.Where(a => a.CreatedAt >= from.Value);
+        if (to.HasValue) query = query.Where(a => a.CreatedAt <= to.Value);
+
+        if (!string.IsNullOrWhiteSpace(reportType))
+        {
+            query = reportType.ToLower() switch
+            {
+                "catalog-quality" => query.Where(a => a.EntityName == "Product"),
+                "low-stock" => query.Where(a => a.Action == "StockChanged"),
+                "price-changes" => query.Where(a => a.Action == "PriceChanged"),
+                "all-audit" => query,
+                _ => throw new InvalidOperationException($"Unknown report type")
+            };
+        }
+
+        return await query.OrderByDescending(a => a.CreatedAt).Take(limit).ToListAsync();
+    }
+}
+```
+
+**LINE-BY-LINE EXPLANATION**:
+- `_context.AuditLogs`: Accesses the database table.
+- `Where(...)`: Generates SQL `WHERE` clauses dynamically.
+- `OrderByDescending`: Ensures newest records are at the top.
+- `GroupBy`: Aggregates data on the DB side for performance.
+- `SaveChangesAsync`: The final "Commit" that persists data to disk.
+
+---
+
+### 🔹 File Name: ProductApprovedConsumer.cs
+**Location**: `Ecom.Reporting.Infrastructure/Messaging/Consumers/ProductApprovedConsumer.cs`
+**Purpose**: Listens to RabbitMQ messages. When a product is approved in another microservice, this code wakes up.
+
+**FULL CODE**: (Simplified structure for explanation)
+```csharp
+protected override async Task ProcessMessageAsync(string message)
+{
+    using var scope = _serviceProvider.CreateScope();
+    var auditService = scope.ServiceProvider.GetRequiredService<IAuditService>();
+
+    var eventData = JsonSerializer.Deserialize<ProductApprovedEvent>(message);
+    
+    await auditService.WriteAsync(new AuditLogDto
+    {
+        EntityName = "Product",
+        EntityId = eventData.ProductId,
+        Action = "Approved",
+        EventType = "product.approved",
+        SourceService = "WorkflowService"
+    });
+}
+```
+
+**LINE-BY-LINE EXPLANATION**:
+- `CreateScope()`: Essential because this is a background thread. It creates a temporary "request context" to use the DbContext.
+- `JsonSerializer.Deserialize`: Converts binary string from RabbitMQ into a C# object.
+- `auditService.WriteAsync`: Sends the data to the DB via the application service.
+
+---
+
+## 🌐 API LAYER (PRESENTATION)
+
+### 🔹 File Name: AuditController.cs
+**Location**: `Ecom.Reporting.API/Controllers/AuditController.cs`
+**Purpose**: The front door for users (Admins) to see the logs.
+
+**FULL CODE**:
+```csharp
+[ApiController]
+[Route("api/audit")]
+[Authorize(Roles = "Admin")]
+public class AuditController : ControllerBase
+{
+    private readonly IAuditService _auditService;
+
+    public AuditController(IAuditService auditService) => _auditService = auditService;
+
+    [HttpGet("products/{productId}")]
+    public async Task<IActionResult> GetProductAudit(int productId)
+    {
+        var logs = await _auditService.GetByProductIdAsync(productId);
+        return Ok(logs);
+    }
+}
+```
+
+**LINE-BY-LINE EXPLANATION**:
+- `[Authorize(Roles = "Admin")]`: Security gate. Only users with the right credentials can pass.
+- `[HttpGet(...)]`: Defines the URL path.
+- `Ok(logs)`: Returns 200 HTTP status code with the data.
+
+---
+
+# 🧠 STEP 3: LAYER UNDERSTANDING (CLEAN ARCHITECTURE)
+
+1.  **Domain**: Contains `AuditLog` (What we record). No dependencies.
+2.  **Application**: Contains `IAuditRepository` (How we want to record) and `AuditService` (The logic). Depends on Domain.
+3.  **Infrastructure**: Contains `AuditRepository` (SQL implementation). Depends on Application/Domain.
+4.  **API**: Contains `AuditController`. Coordinates everything.
+
+---
+
+# 🔄 STEP 4: COMPLETE REQUEST FLOW
+
+1.  **Trigger**: Someone clicks "Approve" in the Workflow Service.
+2.  **Messaging**: Workflow Service publishes a message to RabbitMQ topic `product.approved`.
+3.  **Consumer**: `ProductApprovedConsumer` in Ecom.Reporting catches the message.
+4.  **Application Logic**: Consumer calls `AuditService.WriteAsync`.
+5.  **Infrastructure Logic**: `AuditService` calls `AuditRepository.AddAsync`.
+6.  **Database**: Entity Framework runs `INSERT INTO AuditLogs (...)`.
+7.  **Result**: The action is recorded forever.
+
+---
+
+# 🗄️ STEP 5: DATABASE + CODE LINKING
+
+- **Entity**: `AuditLog`
+- **Table**: `AuditLogs`
+- **Link**: Configured via `AuditLogConfiguration.cs`.
+- **Primary Key**: `Id` (Identity column).
+- **Index**: Composite index on `EntityName` + `EntityId` for fast searches by product history.
+
+---
+
+# 🔁 STEP 6: CLASS FLOW DIAGRAM
+
+**Controller Flow**:
+`AuditController` → `IAuditService` → `IAuditRepository` → `ReportingDbContext` → **Database**
+
+**Messaging Flow**:
+`RabbitMQ` → `ProductApprovedConsumer` → `IAuditService` → `IAuditRepository` → `ReportingDbContext` → **Database**
+
+---
+
+# 🧪 STEP 7: TESTING EXPLANATION
+
+- **Unit Tests (`AuditServiceTests.cs`)**: Tests the logic without a database. Uses `Moq` to fake the Repository.
+- **Integration Tests**: Tests the full flow (API → DB).
+- **Importance**: Prevents regressions. If we change how we calculate a report, tests tell us instantly if we broke it.
+
+---
+
+# 🐳 STEP 8: DOCKER EXPLANATION
+
+**Dockerfile Breakdown**:
+- `FROM .../dotnet/sdk:8.0 AS build`: Uses the builder image (heavy).
+- `COPY . .`: Imports all code.
+- `RUN dotnet publish ...`: Compiles the app.
+- `FROM .../dotnet/aspnet:8.0`: Uses the runtime image (lightweight).
+- `ENTRYPOINT ["dotnet", "Ecom.Reporting.API.dll"]`: Starts the engine.
+
+---
+
+# 🚀 STEP 9: SENIOR ENGINEER INSIGHTS
+
+1.  **Optimization**: Use `AsNoTracking()` in repositories for Read-only queries to improve performance.
+2.  **Scalability**: If the log volume grows to millions, consider **Database Partitioning** by `CreatedAt` (Year/Month).
+3.  **Security**: Mask any sensitive data in `eventData` before logging to DB.
+4.  **Logging**: Add Structured Logging (Serilog) inside Middleware for better observability.
+
+---
+
+# 🎯 STEP 10: INTERVIEW PREPARATION
+
+**Q: Why use Clean Architecture for a simple reporting service?**
+**A**: To protect business rules from technical churn. We can swap RabbitMQ for Kafka or MS SQL for PostgreSQL without rewriting a single line of business logic in the Domain or Application layers.
+
+**Q: How do you handle database failures in consumers?**
+**A**: We use RabbitMQ Acknowledgments. If `ProcessMessageAsync` fails (e.g., DB down), the message is NOT acknowledged and is requeued (Nack with requeue=true) to be retried automatically.
+
+**Q: How is security handled?**
+**A**: JWT Authentication. We validate the token signature in the API middleware and check for the "Admin" role on every request.
+
+---
+**Walkthrough Complete. You are now ready to build, explain, and evolve Ecom.Reporting.**

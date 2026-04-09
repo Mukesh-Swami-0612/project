@@ -1,0 +1,389 @@
+**FILE NAME: workflow_code.txt**
+
+---
+
+# 🔥 MASTER PROMPT: COMPLETE PROJECT WALKTHROUGH (Ecom.Workflow)
+
+---
+
+## 1. 📁 PROJECT OVERVIEW
+
+The **Ecom.Workflow** microservice is the governance engine of our E-commerce platform. It is responsible for managing the lifecycle of product-related changes, specifically **Pricing Adjustments**, **Inventory Updates**, and the **Final Publication** of products to the storefront.
+
+### Role in System:
+*   **Gatekeeper**: Ensures no price or stock change goes live without defined business rules being satisfied.
+*   **Audit Logger**: Maintains a history of every change and approval.
+*   **Event Producer**: Uses the **Transactional Outbox Pattern** to reliably notify other services (Catalog, Search, Reporting) when a workflow step is completed.
+
+### Interactions:
+*   **Catalog Service**: Receives events when a product is published/priced.
+*   **Reporting Service**: Consumes inventory logs for analytics.
+*   **Auth Service**: Provides JWT tokens for role-based access control (Admin vs. ProductManager).
+
+---
+
+## 2. 🏗️ FOLDER STRUCTURE EXPLANATION
+
+This project follows **Clean Architecture** and **Domain-Driven Design (DDD)**.
+
+*   **📂 Ecom.Workflow.Domain**: The heart of the system. Contains Entities, Value Objects, and Domain Rules. It has **Zero Dependencies** on other projects.
+*   **📂 Ecom.Workflow.Application**: Contains the "What". Interfaces, DTOs, and Orchestration logic (Services). Depends only on Domain.
+*   **📂 Ecom.Workflow.Infrastructure**: Contains the "How". Data access (EF Core), Messaging (RabbitMQ), and Persistence. Depends on Application and Domain.
+*   **📂 Ecom.Workflow.API**: The entry point. Handles HTTP requests, Middleware, and Dependency Injection.
+
+---
+
+## 3. 📄 FILE-BY-FILE BREAKDOWN (VERY DETAILED)
+
+---
+
+### 📂 LAYER: DOMAIN
+
+#### 📄 File: Approval.cs
+**✅ Purpose**: Tracks the state of a change request (Submit -> Approve/Reject).
+**🧾 Full Code**:
+```csharp
+namespace Ecom.Workflow.Domain.Entities;
+
+public class Approval
+{
+    public int Id { get; set; }
+    public int ProductId { get; set; }
+    public string? ActionType { get; set; }
+    public int? ApprovedBy { get; set; }
+    public string? Comments { get; set; }
+    public int? StepNumber { get; set; }
+    public bool IsDeleted { get; set; } = false;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? UpdatedAt { get; set; }
+    public byte[]? RowVersion { get; set; }
+}
+```
+**🔍 Explanation**:
+*   `ActionType`: Distinguishes between different workflows (e.g., Price vs. Stock).
+*   `StepNumber`: Supports multi-stage approvals.
+*   `RowVersion`: Enables **Optimistic Concurrency** to prevent two admins from approving/rejecting simultaneously.
+
+#### 📄 File: PriceValidationRule.cs
+**✅ Purpose**: Encapsulates a core business invariant.
+**🧾 Full Code**:
+```csharp
+namespace Ecom.Workflow.Domain.Rules;
+
+public static class PriceValidationRule
+{
+    public static bool IsSatisfiedBy(decimal salePrice, decimal mrp) => salePrice <= mrp;
+}
+```
+**🔍 Explanation**: High-level rule ensuring the sale price never exceeds the MRP. Placing this in Domain ensures it's reused across all layers.
+
+---
+
+### 📂 LAYER: APPLICATION
+
+#### 📄 File: IPricingService.cs
+**✅ Purpose**: Defines the contract for pricing operations.
+**🧾 Full Code**:
+```csharp
+using Ecom.Workflow.Application.DTOs;
+namespace Ecom.Workflow.Application.Interfaces;
+
+public interface IPricingService
+{
+    Task<PricingDto> SavePricingAsync(int productId, PricingDto dto);
+    Task<PricingDto?> GetPricingAsync(int productVariantId);
+}
+```
+
+#### 📄 File: PricingService.cs
+**✅ Purpose**: Implements the business logic for pricing changes.
+**🧾 Full Code**:
+```csharp
+using Ecom.Workflow.Application.DTOs;
+using Ecom.Workflow.Application.Interfaces;
+using Ecom.Workflow.Domain.Entities;
+using Ecom.Workflow.Domain.Rules;
+
+namespace Ecom.Workflow.Application.Services;
+
+public class PricingService : IPricingService
+{
+    private readonly IOutboxRepository _outbox;
+
+    public PricingService(IOutboxRepository outbox) => _outbox = outbox;
+
+    public async Task<PricingDto> SavePricingAsync(int productId, PricingDto dto)
+    {
+        if (!PriceValidationRule.IsSatisfiedBy(dto.SalePrice, dto.MRP))
+            throw new InvalidOperationException("Sale price cannot exceed MRP.");
+
+        await _outbox.AddAsync(new OutboxEvent
+        {
+            EventKey = Guid.NewGuid().ToString(),
+            EventType = "pricing.updated",
+            Payload = System.Text.Json.JsonSerializer.Serialize(dto)
+        });
+
+        return dto;
+    }
+
+    public Task<PricingDto?> GetPricingAsync(int productVariantId) => Task.FromResult<PricingDto?>(null);
+}
+```
+**🔍 Explanation**:
+*   Line 16: Executes the Domain Rule.
+*   Line 21: Uses the **Outbox Pattern**. Instead of calling RabbitMQ directly, it saves the event to the DB. This ensures that if the DB save fails, no event is sent (Atomicity).
+
+---
+
+### 📂 LAYER: INFRASTRUCTURE
+
+#### 📄 File: WorkflowDbContext.cs
+**✅ Purpose**: EF Core configuration for DB mapping.
+**🧾 Full Code**:
+```csharp
+using Ecom.Workflow.Domain.Entities;
+using Microsoft.EntityFrameworkCore;
+
+namespace Ecom.Workflow.Infrastructure.Persistence;
+
+public class WorkflowDbContext : DbContext
+{
+    public WorkflowDbContext(DbContextOptions<WorkflowDbContext> options) : base(options) { }
+
+    public DbSet<Price> Prices => Set<Price>();
+    public DbSet<Inventory> Inventories => Set<Inventory>();
+    public DbSet<InventoryLog> InventoryLogs => Set<InventoryLog>();
+    public DbSet<Approval> Approvals => Set<Approval>();
+    public DbSet<OutboxEvent> OutboxEvents => Set<OutboxEvent>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.ApplyConfigurationsFromAssembly(typeof(WorkflowDbContext).Assembly);
+    }
+}
+```
+
+#### 📄 File: OutboxProcessor.cs
+**✅ Purpose**: A background worker that "drains" the Outbox queue to RabbitMQ.
+**🧾 Full Code**:
+```csharp
+using Ecom.Workflow.Application.Interfaces;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+
+namespace Ecom.Workflow.Infrastructure.Messaging;
+
+public class OutboxProcessor : BackgroundService
+{
+    private readonly IServiceProvider _services;
+    private readonly ILogger<OutboxProcessor> _logger;
+
+    public OutboxProcessor(IServiceProvider services, ILogger<OutboxProcessor> logger)
+    {
+        _services = services;
+        _logger = logger;
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            using var scope = _services.CreateScope();
+            var outbox = scope.ServiceProvider.GetRequiredService<IOutboxRepository>();
+            var publisher = scope.ServiceProvider.GetRequiredService<WorkflowEventPublisher>();
+
+            var events = await outbox.GetUnprocessedAsync();
+            foreach (var ev in events)
+            {
+                await publisher.PublishAsync(ev.EventType!, ev.Payload!);
+                await outbox.MarkProcessedAsync(ev.Id);
+                _logger.LogInformation("Processed outbox event {Id}: {EventType}", ev.Id, ev.EventType);
+            }
+
+            await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+        }
+    }
+}
+```
+**🔍 Explanation**: This ensures **At-Least-Once Delivery**. If the publisher fails, the event stays in the DB as `IsProcessed = false` and will be retried in 5 seconds.
+
+---
+
+### 📂 LAYER: API
+
+#### 📄 File: PricingController.cs
+**🧾 Full Code**:
+```csharp
+using Ecom.Workflow.Application.DTOs;
+using Ecom.Workflow.Application.Interfaces;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+
+namespace Ecom.Workflow.API.Controllers;
+
+[ApiController] [Route("api/workflow/products/{productId}/pricing")]
+[Authorize(Roles = "Admin,ProductManager")]
+public class PricingController : ControllerBase
+{
+    private readonly IPricingService _pricingService;
+    public PricingController(IPricingService pricingService) => _pricingService = pricingService;
+
+    [HttpPut]
+    public async Task<IActionResult> SavePricing(int productId, [FromBody] PricingDto dto)
+    {
+        var result = await _pricingService.SavePricingAsync(productId, dto);
+        return Ok(result);
+    }
+}
+```
+
+---
+
+## 4. 🔄 COMPLETE FLOW (REQUEST → RESPONSE)
+
+**Scenario: Updating a Product Price ($100 -> $80)**
+
+1.  **API**: `PricingController` receives a `PUT` request. It validates the JWT (Role must be Admin/Manager).
+2.  **Application**: `PricingService.SavePricingAsync` is called.
+3.  **Domain**: `PriceValidationRule` ensures $80 <= $100 (MRP).
+4.  **Infa (Persistence)**: `OutboxRepository` saves a "pricing.updated" event to the database.
+5.  **Infa (Messaging)**: `OutboxProcessor` (background thread) detects the new event, sends it to RabbitMQ, and marks it as processed.
+6.  **Response**: API returns `200 OK` with the updated DTO.
+
+---
+
+## 5. 🧠 BUSINESS LOGIC EXPLANATION
+
+We use **Readiness Rules** for publication. A product cannot go live unless:
+1.  Images exist (`HasMedia`).
+2.  Pricing is set (`HasPricing`).
+3.  Stock is available (`HasInventory`).
+4.  Description is complete (`HasDescription`).
+5.  State is "Approved" by an Admin.
+
+This logic is centralized in the `Ecom.Workflow.Domain.Rules` folder to prevent leakage of business logic into controllers.
+
+---
+
+## 6. 🗄️ DATABASE INTEGRATION
+
+*   **Repository Pattern**: We use repositories like `OutboxRepository` to abstract `WorkflowDbContext`. This allows us to swap the DB (e.g., SQL to Mongo) or use an In-Memory DB for testing.
+*   **Fluent API**: Configured in `Configurations/` folder. It maps our C# decimals to `decimal(10,2)` in SQL for financial accuracy.
+
+---
+
+## 7. 🔗 CLASS FLOW DIAGRAM
+
+```text
+HTTP Client (Browser/Postman)
+   ↓ (JWT Token)
+PricingController (API)
+   ↓
+PricingService (Application)
+   ↓
+OutboxRepository (Infa) --> [WorkflowDbContext] --> [SQL Server]
+   ↓ 
+OutboxProcessor (Background Thread)
+   ↓
+WorkflowEventPublisher (RabbitMQ Client)
+   ↓
+RabbitMQ Exchange ("ecom.workflow.events")
+```
+
+---
+
+## 8. ⚙️ CONFIGURATION & MIDDLEWARE
+
+### Program.cs Highlights:
+*   **JWT Setup**: Configures issuer/audience validation via `AddJwtBearer`.
+*   **DI Container**: Registers scoped services (`AddScoped`) and hosted services (`AddHostedService`).
+*   **Middleware**:
+    *   `ExceptionHandlingMiddleware`: Centralized try-catch to return clean JSON errors.
+    *   `RequestLoggingMiddleware`: Logs every incoming HTTP method and path.
+
+---
+
+## 9. 🐳 DOCKERFILE EXPLANATION
+
+```dockerfile
+FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS base
+WORKDIR /app
+EXPOSE 80
+
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+WORKDIR /src
+COPY ["Ecom.Workflow.API/Ecom.Workflow.API.csproj", "Ecom.Workflow.API/"]
+# (Copies all other .csproj files...)
+RUN dotnet restore "Ecom.Workflow.API/Ecom.Workflow.API.csproj"
+COPY . .
+RUN dotnet build "Ecom.Workflow.API/Ecom.Workflow.API.csproj" -c Release -o /app/build
+
+FROM build AS publish
+RUN dotnet publish "Ecom.Workflow.API/Ecom.Workflow.API.csproj" -c Release -o /app/publish
+
+FROM base AS final
+WORKDIR /app
+COPY --from=publish /app/publish .
+ENTRYPOINT ["dotnet", "Ecom.Workflow.API.dll"]
+```
+**🔍 Breakdown**:
+1.  **Multi-Stage Build**: Reduces the final image size by keeping the heavy SDK out of the production runtime.
+2.  **Restore Phase**: Copies only `.csproj` files first to leverage Docker Layer Caching (fastens subsequent builds).
+
+---
+
+## 10. 🧪 TESTING LAYER
+
+We use **NUnit** and **Moq**.
+**Example (`ApprovalServiceTests.cs`)**:
+```csharp
+[Test]
+public async Task SubmitForReviewAsync_PublishesSubmittedEvent()
+{
+    await _service.SubmitForReviewAsync(1, 2);
+    _outboxMock.Verify(o => o.AddAsync(It.Is<OutboxEvent>(e => e.EventType == "product.submitted")), Times.Once);
+}
+```
+*   **Why?**: We verify that calling the service correctly creates an Outbox event without having to connect to a real database.
+
+---
+
+## 11. 🚀 DESIGN PATTERNS USED
+
+1.  **Clean Architecture**: Separation of concerns; Domain is independent.
+2.  **Outbox Pattern**: Reliable messaging across microservices.
+3.  **Repository Pattern**: Data abstraction.
+4.  **Observer (Event-Based)**: Async communication via RabbitMQ.
+5.  **Decorator/Middleware**: For logging and error handling.
+
+---
+
+## 12. 💡 WHY THIS DESIGN IS INDUSTRY LEVEL
+
+*   **Scalability**: The `OutboxProcessor` allows the system to handle bursts of events asynchronously.
+*   **Resilience**: If RabbitMQ is down, the system continues to work (events remain in DB).
+*   **Auditability**: Every change is stored in a dedicated `OutboxEvents` and `Approvals` table.
+*   **Security**: Strict Role-Based access to critical pricing/publishing methods.
+
+---
+
+## 13. 🎤 INTERVIEW QUESTIONS (BONUS)
+
+1.  **Q: Why use the Outbox Pattern instead of publishing directly to RabbitMQ?**
+    *   **A**: To ensure atomicity. If we publish to RabbitMQ first and then the DB save fails, we have a "phantom event". Outbox ensures either both succeed or both fail.
+2.  **Q: How do you handle concurrency in Approvals?**
+    *   **A**: We use `RowVersion` (Timestamp) for Optimistic Concurrency Control in EF Core.
+3.  **Q: What is the benefit of placing rules in the Domain layer?**
+    *   **A**: It centralizes business invariants, ensuring they are identical across all features and layers.
+
+---
+
+## 14. ⚡ 2-MINUTE PROJECT PITCH
+
+"I've built the **Ecom.Workflow** microservice, which acts as the core governance engine for a large-scale e-commerce platform. Using **Clean Architecture** and **DDD**, it manages critical product lifecycles like pricing and stock updates. The standout feature is the **Transactional Outbox Pattern** I implemented, which ensures that event-driven communication with other services is 100% reliable even during network failures. It features role-based security, comprehensive unit testing with Moq, and is fully containerized with Docker for enterprise deployment."
+
+---
+
+**END OF FILE**

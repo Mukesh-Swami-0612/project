@@ -1,0 +1,44 @@
+<Solution>
+  <Folder Name="/gateway/">
+    <Project Path="gateway/Ecom.Gateway/Ecom.Gateway.csproj" />
+  </Folder>
+  <Folder Name="/services/" />
+  <Folder Name="/services/auth/" />
+  <Folder Name="/services/auth/Ecom.Auth/">
+    <Project Path="services/auth/Ecom.Auth/Ecom.Auth.API/Ecom.Auth.API.csproj" />
+    <Project Path="services/auth/Ecom.Auth/Ecom.Auth.Application/Ecom.Auth.Application.csproj" />
+    <Project Path="services/auth/Ecom.Auth/Ecom.Auth.Domain/Ecom.Auth.Domain.csproj" />
+    <Project Path="services/auth/Ecom.Auth/Ecom.Auth.Infrastructure/Ecom.Auth.Infrastructure.csproj" />
+    <Project Path="services/auth/Ecom.Auth/Ecom.Auth.Tests/Ecom.Auth.Tests.csproj" />
+  </Folder>
+  <Folder Name="/services/catalog/" />
+  <Folder Name="/services/catalog/Ecom.Catalog/">
+    <Project Path="services/catalog/Ecom.Catalog/Ecom.Catalog.API/Ecom.Catalog.API.csproj" />
+    <Project Path="services/catalog/Ecom.Catalog/Ecom.Catalog.Application/Ecom.Catalog.Application.csproj" />
+    <Project Path="services/catalog/Ecom.Catalog/Ecom.Catalog.Domain/Ecom.Catalog.Domain.csproj" />
+    <Project Path="services/catalog/Ecom.Catalog/Ecom.Catalog.Infrastructure/Ecom.Catalog.Infrastructure.csproj" />
+    <Project Path="services/catalog/Ecom.Catalog/Ecom.Catalog.Tests/Ecom.Catalog.Tests.csproj" />
+  </Folder>
+  <Folder Name="/services/reporting/" />
+  <Folder Name="/services/reporting/Ecom.Reporting/">
+    <Project Path="services/reporting/Ecom.Reporting/Ecom.Reporting.API/Ecom.Reporting.API.csproj" />
+    <Project Path="services/reporting/Ecom.Reporting/Ecom.Reporting.Application/Ecom.Reporting.Application.csproj" />
+    <Project Path="services/reporting/Ecom.Reporting/Ecom.Reporting.Domain/Ecom.Reporting.Domain.csproj" />
+    <Project Path="services/reporting/Ecom.Reporting/Ecom.Reporting.Infrastructure/Ecom.Reporting.Infrastructure.csproj" />
+    <Project Path="services/reporting/Ecom.Reporting/Ecom.Reporting.Tests/Ecom.Reporting.Tests.csproj" />
+  </Folder>
+  <Folder Name="/services/workflow/" />
+  <Folder Name="/services/workflow/Ecom.Workflow/">
+    <Project Path="services/workflow/Ecom.Workflow/Ecom.Workflow.API/Ecom.Workflow.API.csproj" />
+    <Project Path="services/workflow/Ecom.Workflow/Ecom.Workflow.Application/Ecom.Workflow.Application.csproj" />
+    <Project Path="services/workflow/Ecom.Workflow/Ecom.Workflow.Domain/Ecom.Workflow.Domain.csproj" />
+    <Project Path="services/workflow/Ecom.Workflow/Ecom.Workflow.Infrastructure/Ecom.Workflow.Infrastructure.csproj" />
+    <Project Path="services/workflow/Ecom.Workflow/Ecom.Workflow.Tests/Ecom.Workflow.Tests.csproj" />
+  </Folder>
+  <Folder Name="/services/Ecom.Shared.Contracts/">
+    <Project Path="services/Ecom.Shared.Contracts/Ecom.Shared.Contracts.csproj" />
+  </Folder>
+  <Folder Name="/services/Ecom.Shared.Infrastructure/">
+    <Project Path="services/Ecom.Shared.Infrastructure/Ecom.Shared.Infrastructure.csproj" />
+  </Folder>
+</Solution>

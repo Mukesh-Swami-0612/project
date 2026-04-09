@@ -1,0 +1,1464 @@
+================================================================================
+    AUTHENTICATION MICROSERVICE - TECHNICAL DOCUMENTATION
+    Clean Architecture + Domain-Driven Design (DDD)
+    Entity Framework Core - Code-First Approach
+================================================================================
+
+TABLE OF CONTENTS
+-----------------
+1. ARCHITECTURE OVERVIEW
+2. AUTHENTICATION FLOW
+3. DATABASE DESIGN (TABLES & RELATIONSHIPS)
+4. ENTITY MODELS (C# CODE-FIRST)
+5. DBCONTEXT & FLUENT API CONFIGURATIONS
+6. RELATIONSHIPS & CONSTRAINTS
+7. MIGRATION STEPS
+8. SECURITY CONFIGURATION
+9. API ENDPOINTS
+10. MIDDLEWARE PIPELINE
+
+================================================================================
+SECTION 1: ARCHITECTURE OVERVIEW
+================================================================================
+
+This microservice follows Clean Architecture principles with 4 distinct layers:
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         PRESENTATION LAYER                               │
+│                      (Ecom.Auth.API)                                     │
+│  • Controllers (AuthController, UsersController, AdminAuditController)  │
+│  • Middleware (Exception, Logging, Audit, CORS)                         │
+│  • Program.cs (DI, JWT, Rate Limiting, Swagger)                         │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    ↓
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        APPLICATION LAYER                                 │
+│                   (Ecom.Auth.Application)                                │
+│  • Services (AuthService, TokenService, UserManagementService)          │
+│  • DTOs (LoginRequestDto, SignupRequestDto, etc.)                       │
+│  • Interfaces (IAuthService, ITokenService, IUserRepository)            │
+│  • Validators (FluentValidation)                                        │
+│  • Mappings (AutoMapper)                                                │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    ↓
+┌─────────────────────────────────────────────────────────────────────────┐
+│                          DOMAIN LAYER                                    │
+│                     (Ecom.Auth.Domain)                                   │
+│  • Entities (User, Role, RefreshToken, EmailVerificationToken)          │
+│  • Enums (UserStatus, ActionType)                                       │
+│  • Domain Events                                                         │
+│  • Business Rules (Pure domain logic, no dependencies)                  │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    ↓
+┌─────────────────────────────────────────────────────────────────────────┐
+│                      INFRASTRUCTURE LAYER                                │
+│                  (Ecom.Auth.Infrastructure)                              │
+│  • Persistence (AuthDbContext, Entity Configurations)                   │
+│  • Repositories (UserRepository, RefreshTokenRepository)                │
+│  • Services (EmailService, RabbitMqPublisher)                           │
+│  • Migrations (EF Core Code-First)                                      │
+└─────────────────────────────────────────────────────────────────────────┘
+
+LAYER RESPONSIBILITIES:
+-----------------------
+
+1. API LAYER (Presentation)
+   - HTTP request/response handling
+   - Input validation (FluentValidation)
+   - JWT authentication/authorization
+   - Rate limiting
+   - Exception handling middleware
+   - Swagger documentation
+
+2. APPLICATION LAYER
+   - Business logic orchestration
+   - Service interfaces and implementations
+   - DTOs for data transfer
+   - Password validation
+   - Token generation and rotation
+   - Event publishing (RabbitMQ)
+
+3. DOMAIN LAYER
+   - Core business entities
+   - Domain events
+   - Business rules
+   - No external dependencies (pure C#)
+
+4. INFRASTRUCTURE LAYER
+   - Database access (EF Core)
+   - Repository implementations
+   - External service integrations (Email, Messaging)
+   - Data persistence configurations
+
+DEPENDENCY RULE:
+----------------
+Dependencies flow INWARD only:
+API → Application → Domain ← Infrastructure
+
+Domain has NO dependencies on other layers.
+Infrastructure depends on Domain (for entities).
+Application depends on Domain (for entities and interfaces).
+API depends on Application (for services and DTOs).
+
+================================================================================
+SECTION 2: AUTHENTICATION FLOW
+================================================================================
+
+2.1 USER REGISTRATION FLOW
+---------------------------
+Request → Controller → AuthService → UserRepository → Database
+
+1. User submits signup request (Name, Email, Password, RoleId)
+2. AuthController receives SignupRequestDto
+3. FluentValidation validates input
+4. AuthService.SignupAsync():
+   - Check if email already exists
+   - Validate role exists in database
+   - Validate password strength (min 8 chars, uppercase, lowercase, digit, special char)
+   - Hash password using BCrypt
+   - Create User entity
+   - Generate 6-digit OTP verification token
+   - Save user + verification token in transaction
+   - Send verification email
+   - Publish UserActionEvent to RabbitMQ
+5. Return UserDto (without password)
+
+Security Features:
+- Password hashing with BCrypt (cost factor 11)
+- Email verification required before login
+- Transaction ensures atomicity
+- Audit logging via events
+
+2.2 EMAIL VERIFICATION FLOW
+----------------------------
+1. User receives 6-digit OTP via email
+2. User submits verification token
+3. AuthService.VerifyEmailAsync():
+   - Validate token exists and not expired
+   - Check if token already used
+   - Mark token as used
+   - Set User.IsEmailVerified = true
+   - Save changes
+4. User can now login
+
+2.3 LOGIN FLOW (JWT-BASED)
+---------------------------
+Request → Controller → AuthService → TokenService → Database
+
+1. User submits login request (Email, Password)
+2. Rate limiter checks: max 5 attempts per minute per IP
+3. AuthService.LoginAsync():
+   - Fetch user by email
+   - Perform fake hash verification if user not found (timing attack prevention)
+   - Check if user is deleted, inactive, or email not verified
+   - Check if account is locked (after 5 failed attempts)
+   - Verify password using BCrypt
+   - If invalid: increment FailedLoginAttempts, lock after 5 attempts
+   - If valid: reset FailedLoginAttempts and LockoutEnd
+   - Generate JWT access token (15 min expiry)
+   - Generate refresh token (7 days expiry)
+   - Save refresh token to database
+   - Publish login success event
+4. Return LoginResponseDto:
+   - AccessToken (JWT)
+   - RefreshToken
+   - ExpiresAt
+   - Role
+   - RedirectTo (role-based navigation)
+
+JWT Claims:
+- NameIdentifier (UserId)
+- Name
+- Email
+- Role
+
+Security Features:
+- Timing attack prevention (fake hash verification)
+- Account lockout after 5 failed attempts (30 min lockout)
+- Email verification required
+- Refresh token rotation
+- Rate limiting
+
+2.4 REFRESH TOKEN FLOW (TOKEN ROTATION)
+----------------------------------------
+1. Client sends expired access token + refresh token
+2. Rate limiter: max 10 requests per minute per IP
+3. TokenService.RotateRefreshTokenAsync():
+   - Validate refresh token exists
+   - Check if token is revoked (REUSE DETECTION)
+   - If revoked: REVOKE ALL USER TOKENS (security breach)
+   - Check if token expired
+   - Validate user is active
+   - Generate new access token + new refresh token
+   - Mark old refresh token as revoked
+   - Save new refresh token
+4. Return new token pair
+
+Security Features:
+- Automatic token rotation (one-time use)
+- Reuse detection (revokes all sessions if stolen)
+- Sliding expiration
+
+2.5 LOGOUT FLOW
+---------------
+1. User submits refresh token to revoke
+2. AuthService.LogoutAsync():
+   - Validate token exists
+   - Verify token ownership (userId from JWT)
+   - Check if already revoked
+   - Mark token as revoked
+   - Publish logout event
+3. Return success
+
+Logout All Sessions:
+- Revokes all active refresh tokens for user
+- Forces re-login on all devices
+
+2.6 FORGOT PASSWORD FLOW
+-------------------------
+1. User submits email
+2. Rate limiter: max 3 requests per minute per IP
+3. AuthService.ForgotPasswordAsync():
+   - Fetch user by email (silent fail if not found)
+   - Generate 6-digit OTP reset token
+   - Save token with 1-hour expiry
+   - Send password reset email
+4. Return generic success (prevent email enumeration)
+
+2.7 RESET PASSWORD FLOW
+------------------------
+1. User submits email + reset token + new password
+2. AuthService.ResetPasswordAsync():
+   - Validate user exists
+   - Validate token exists and belongs to user
+   - Check if token already used
+   - Check if token expired
+   - Validate new password strength
+   - Mark token as used
+   - Hash and update password
+3. Return success
+
+2.8 CHANGE PASSWORD FLOW (AUTHENTICATED)
+-----------------------------------------
+1. Authenticated user submits current + new password
+2. AuthService.ChangePasswordAsync():
+   - Fetch user by ID from JWT
+   - Verify current password
+   - Validate new password strength
+   - Ensure new password differs from current
+   - Hash and update password
+   - Publish password change event
+3. Return success
+
+================================================================================
+SECTION 3: DATABASE DESIGN (TABLES & RELATIONSHIPS)
+================================================================================
+
+DATABASE: AuthDb (SQL Server)
+
+TABLES:
+-------
+1. Roles
+2. Users
+3. RefreshTokens
+4. EmailVerificationTokens
+5. AuditLogs
+6. Logs (Serilog)
+
+3.1 ROLES TABLE
+---------------
+Purpose: Store user roles for authorization
+
+Column Name       Data Type        Constraints
+-----------       ---------        -----------
+Id                INT              PRIMARY KEY, IDENTITY
+RoleName          NVARCHAR(50)     NOT NULL, UNIQUE
+
+Seed Data:
+- Admin
+- ProductManager
+- ContentExecutive
+- Customer
+
+3.2 USERS TABLE
+---------------
+Purpose: Store user accounts
+
+Column Name            Data Type        Constraints
+-----------            ---------        -----------
+Id                     INT              PRIMARY KEY, IDENTITY
+Name                   NVARCHAR(100)    NOT NULL
+Email                  NVARCHAR(150)    NOT NULL, UNIQUE
+PasswordHash           NVARCHAR(255)    NOT NULL
+RoleId                 INT              NOT NULL, FOREIGN KEY → Roles(Id)
+IsActive               BIT              NOT NULL, DEFAULT 1
+IsDeleted              BIT              NOT NULL, DEFAULT 0
+IsEmailVerified        BIT              NOT NULL, DEFAULT 0
+FailedLoginAttempts    INT              NOT NULL, DEFAULT 0
+LockoutEnd             DATETIME2        NULL
+CreatedAt              DATETIME2        NOT NULL, DEFAULT GETUTCDATE()
+UpdatedAt              DATETIME2        NULL
+
+Indexes:
+- UNIQUE INDEX on Email
+- FOREIGN KEY on RoleId
+
+3.3 REFRESHTOKENS TABLE
+-----------------------
+Purpose: Store refresh tokens for JWT rotation
+
+Column Name       Data Type        Constraints
+-----------       ---------        -----------
+Id                INT              PRIMARY KEY, IDENTITY
+UserId            INT              NOT NULL, FOREIGN KEY → Users(Id) ON DELETE CASCADE
+Token             NVARCHAR(512)    NOT NULL, UNIQUE
+ExpiryDate        DATETIME2        NOT NULL (mapped from Expiry property)
+CreatedAt         DATETIME2        NOT NULL, DEFAULT GETUTCDATE()
+IsRevoked         BIT              NOT NULL, DEFAULT 0
+
+Indexes:
+- UNIQUE INDEX on Token
+- FOREIGN KEY on UserId with CASCADE DELETE
+
+3.4 EMAILVERIFICATIONTOKENS TABLE
+----------------------------------
+Purpose: Store email verification and password reset tokens
+
+Column Name       Data Type        Constraints
+-----------       ---------        -----------
+Id                INT              PRIMARY KEY, IDENTITY
+UserId            INT              NOT NULL, FOREIGN KEY → Users(Id) ON DELETE CASCADE
+Token             NVARCHAR(10)     NOT NULL (6-digit OTP)
+ExpiresAt         DATETIME2        NOT NULL
+IsUsed            BIT              NOT NULL, DEFAULT 0
+CreatedAt         DATETIME2        NOT NULL, DEFAULT GETUTCDATE()
+
+Indexes:
+- FOREIGN KEY on UserId with CASCADE DELETE
+
+Use Cases:
+- Email verification after signup (24-hour expiry)
+- Password reset (1-hour expiry)
+
+3.5 AUDITLOGS TABLE
+-------------------
+Purpose: Store user action audit trail
+
+Column Name       Data Type        Constraints
+-----------       ---------        -----------
+Id                INT              PRIMARY KEY, IDENTITY
+UserId            INT              NULL (nullable for failed login attempts)
+Email             NVARCHAR(150)    NOT NULL
+Action            NVARCHAR(50)     NOT NULL (LOGIN, SIGNUP, LOGOUT, etc.)
+Status            NVARCHAR(20)     NOT NULL (SUCCESS, FAILED)
+IpAddress         NVARCHAR(50)     NOT NULL
+CreatedAt         DATETIME2        NOT NULL, DEFAULT GETUTCDATE()
+
+Actions Logged:
+- Signup, Login, Logout, LogoutAll
+- ChangePassword, ForgotPassword, ResetPassword
+- VerifyEmail, ResendVerification
+- ChangeRole, UpdateUserStatus
+
+3.6 LOGS TABLE (SERILOG)
+-------------------------
+Purpose: Application logging (auto-created by Serilog)
+
+Column Name       Data Type        Constraints
+-----------       ---------        -----------
+Id                INT              PRIMARY KEY, IDENTITY
+Message           NVARCHAR(MAX)    NULL
+MessageTemplate   NVARCHAR(MAX)    NULL
+Level             NVARCHAR(128)    NULL
+TimeStamp         DATETIME2        NOT NULL
+Exception         NVARCHAR(MAX)    NULL
+Properties        NVARCHAR(MAX)    NULL
+
+ENTITY RELATIONSHIP DIAGRAM (ERD):
+-----------------------------------
+
+┌─────────────┐
+│    Roles    │
+│─────────────│
+│ Id (PK)     │
+│ RoleName    │
+└─────────────┘
+       │
+       │ 1
+       │
+       │ N
+       ↓
+┌──────────────────────┐
+│       Users          │
+│──────────────────────│
+│ Id (PK)              │
+│ Name                 │
+│ Email (UNIQUE)       │
+│ PasswordHash         │
+│ RoleId (FK)          │
+│ IsActive             │
+│ IsDeleted            │
+│ IsEmailVerified      │
+│ FailedLoginAttempts  │
+│ LockoutEnd           │
+│ CreatedAt            │
+│ UpdatedAt            │
+└──────────────────────┘
+       │
+       │ 1
+       │
+       ├─────────────────────────┐
+       │                         │
+       │ N                       │ N
+       ↓                         ↓
+┌──────────────────┐    ┌────────────────────────┐
+│  RefreshTokens   │    │ EmailVerificationTokens│
+│──────────────────│    │────────────────────────│
+│ Id (PK)          │    │ Id (PK)                │
+│ UserId (FK)      │    │ UserId (FK)            │
+│ Token (UNIQUE)   │    │ Token                  │
+│ ExpiryDate       │    │ ExpiresAt              │
+│ CreatedAt        │    │ IsUsed                 │
+│ IsRevoked        │    │ CreatedAt              │
+└──────────────────┘    └────────────────────────┘
+
+┌─────────────────┐
+│   AuditLogs     │
+│─────────────────│
+│ Id (PK)         │
+│ UserId (NULL)   │
+│ Email           │
+│ Action          │
+│ Status          │
+│ IpAddress       │
+│ CreatedAt       │
+└─────────────────┘
+
+RELATIONSHIPS:
+--------------
+1. Role → Users (One-to-Many)
+   - One role can have many users
+   - Each user has exactly one role
+
+2. User → RefreshTokens (One-to-Many)
+   - One user can have multiple refresh tokens (multi-device support)
+   - Cascade delete: deleting user removes all tokens
+
+3. User → EmailVerificationTokens (One-to-Many)
+   - One user can have multiple verification tokens
+   - Cascade delete: deleting user removes all tokens
+
+4. AuditLogs (Independent)
+   - No foreign key constraint (allows logging for deleted users)
+   - UserId is nullable for failed login attempts
+
+================================================================================
+SECTION 4: ENTITY MODELS (C# CODE-FIRST)
+================================================================================
+
+4.1 ROLE ENTITY
+---------------
+
+namespace Ecom.Auth.Domain.Entities;
+
+public class Role
+{
+    public int Id { get; set; }
+    public string RoleName { get; set; } = string.Empty;
+    
+    // Navigation Property
+    public ICollection<User> Users { get; set; } = new List<User>();
+}
+
+4.2 USER ENTITY
+---------------
+
+namespace Ecom.Auth.Domain.Entities;
+
+public class User
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string Email { get; set; } = string.Empty;
+    public string PasswordHash { get; set; } = string.Empty;
+    public int RoleId { get; set; }
+    public bool IsActive { get; set; } = true;
+    public bool IsDeleted { get; set; } = false;
+    public bool IsEmailVerified { get; set; } = false;
+    public int FailedLoginAttempts { get; set; } = 0;
+    public DateTime? LockoutEnd { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? UpdatedAt { get; set; }
+
+    // Navigation Properties
+    public Role Role { get; set; } = null!;
+    public ICollection<RefreshToken> RefreshTokens { get; set; } = new List<RefreshToken>();
+    public ICollection<EmailVerificationToken> EmailVerificationTokens { get; set; } = new List<EmailVerificationToken>();
+}
+
+4.3 REFRESHTOKEN ENTITY
+-----------------------
+
+namespace Ecom.Auth.Domain.Entities;
+
+public class RefreshToken
+{
+    public int Id { get; set; }
+    public int UserId { get; set; }
+    public string Token { get; set; } = string.Empty;
+    public DateTime Expiry { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public bool IsRevoked { get; set; } = false;
+    
+    // Navigation Property
+    public User User { get; set; } = null!;
+}
+
+4.4 EMAILVERIFICATIONTOKEN ENTITY
+----------------------------------
+
+namespace Ecom.Auth.Domain.Entities;
+
+public class EmailVerificationToken
+{
+    public int Id { get; set; }
+    public int UserId { get; set; }
+    public string Token { get; set; } = string.Empty;
+    public DateTime ExpiresAt { get; set; }
+    public bool IsUsed { get; set; } = false;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    
+    // Navigation Property
+    public User User { get; set; } = null!;
+}
+
+4.5 AUDITLOG ENTITY
+-------------------
+
+namespace Ecom.Auth.Domain.Entities;
+
+public class AuditLog
+{
+    public int Id { get; set; }
+    public int? UserId { get; set; }
+    public string Email { get; set; } = string.Empty;
+    public string Action { get; set; } = string.Empty;   // LOGIN, SIGNUP, etc.
+    public string Status { get; set; } = string.Empty;   // SUCCESS / FAILED
+    public string IpAddress { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
+================================================================================
+SECTION 5: DBCONTEXT & FLUENT API CONFIGURATIONS
+================================================================================
+
+5.1 AUTHDBCONTEXT
+-----------------
+
+using Ecom.Auth.Domain.Entities;
+using Microsoft.EntityFrameworkCore;
+
+namespace Ecom.Auth.Infrastructure.Persistence;
+
+public class AuthDbContext : DbContext
+{
+    public AuthDbContext(DbContextOptions<AuthDbContext> options) : base(options) { }
+
+    // DbSets
+    public DbSet<User> Users => Set<User>();
+    public DbSet<Role> Roles => Set<Role>();
+    public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
+    public DbSet<EmailVerificationToken> EmailVerificationTokens => Set<EmailVerificationToken>();
+    public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        // Apply all configurations from assembly
+        modelBuilder.ApplyConfigurationsFromAssembly(typeof(AuthDbContext).Assembly);
+    }
+}
+
+5.2 ROLE CONFIGURATION (FLUENT API)
+-----------------------------------
+
+using Ecom.Auth.Domain.Entities;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
+
+namespace Ecom.Auth.Infrastructure.Persistence.Configurations;
+
+public class RoleConfiguration : IEntityTypeConfiguration<Role>
+{
+    public void Configure(EntityTypeBuilder<Role> builder)
+    {
+        // Primary Key
+        builder.HasKey(r => r.Id);
+        
+        // Properties
+        builder.Property(r => r.RoleName)
+            .IsRequired()
+            .HasMaxLength(50);
+        
+        // Unique Index
+        builder.HasIndex(r => r.RoleName)
+            .IsUnique();
+
+        // Seed Data
+        builder.HasData(
+            new Role { Id = 1, RoleName = "Admin" },
+            new Role { Id = 2, RoleName = "ProductManager" },
+            new Role { Id = 3, RoleName = "ContentExecutive" },
+            new Role { Id = 4, RoleName = "Customer" }
+        );
+    }
+}
+
+5.3 USER CONFIGURATION (FLUENT API)
+-----------------------------------
+
+using Ecom.Auth.Domain.Entities;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
+
+namespace Ecom.Auth.Infrastructure.Persistence.Configurations;
+
+public class UserConfiguration : IEntityTypeConfiguration<User>
+{
+    public void Configure(EntityTypeBuilder<User> builder)
+    {
+        // Primary Key
+        builder.HasKey(u => u.Id);
+        
+        // Properties
+        builder.Property(u => u.Name)
+            .IsRequired()
+            .HasMaxLength(100);
+        
+        builder.Property(u => u.Email)
+            .IsRequired()
+            .HasMaxLength(150);
+        
+        builder.Property(u => u.PasswordHash)
+            .IsRequired()
+            .HasMaxLength(255);
+        
+        // Unique Index on Email
+        builder.HasIndex(u => u.Email)
+            .IsUnique();
+        
+        // Relationships
+        builder.HasOne(u => u.Role)
+            .WithMany(r => r.Users)
+            .HasForeignKey(u => u.RoleId)
+            .OnDelete(DeleteBehavior.Restrict);  // Prevent role deletion if users exist
+    }
+}
+
+5.4 REFRESHTOKEN CONFIGURATION (FLUENT API)
+-------------------------------------------
+
+using Ecom.Auth.Domain.Entities;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
+
+namespace Ecom.Auth.Infrastructure.Persistence.Configurations;
+
+public class RefreshTokenConfiguration : IEntityTypeConfiguration<RefreshToken>
+{
+    public void Configure(EntityTypeBuilder<RefreshToken> builder)
+    {
+        // Primary Key
+        builder.HasKey(t => t.Id);
+
+        // Properties
+        builder.Property(t => t.Token)
+            .IsRequired()
+            .HasMaxLength(512);
+
+        // Column Name Mapping
+        builder.Property(t => t.Expiry)
+            .HasColumnName("ExpiryDate");
+
+        // Unique Index on Token
+        builder.HasIndex(t => t.Token)
+            .IsUnique();
+
+        // Relationships
+        builder.HasOne(t => t.User)
+            .WithMany(u => u.RefreshTokens)
+            .HasForeignKey(t => t.UserId)
+            .OnDelete(DeleteBehavior.Cascade);  // Delete tokens when user is deleted
+    }
+}
+
+5.5 EMAILVERIFICATIONTOKEN CONFIGURATION (FLUENT API)
+-----------------------------------------------------
+
+using Ecom.Auth.Domain.Entities;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
+
+namespace Ecom.Auth.Infrastructure.Persistence.Configurations;
+
+public class EmailVerificationTokenConfiguration : IEntityTypeConfiguration<EmailVerificationToken>
+{
+    public void Configure(EntityTypeBuilder<EmailVerificationToken> builder)
+    {
+        // Primary Key
+        builder.HasKey(t => t.Id);
+
+        // Properties
+        builder.Property(t => t.Token)
+            .IsRequired()
+            .HasMaxLength(10);
+
+        // Relationships
+        builder.HasOne(t => t.User)
+            .WithMany(u => u.EmailVerificationTokens)
+            .HasForeignKey(t => t.UserId)
+            .OnDelete(DeleteBehavior.Cascade);  // Delete tokens when user is deleted
+    }
+}
+
+5.6 AUDITLOG CONFIGURATION (FLUENT API)
+---------------------------------------
+
+using Ecom.Auth.Domain.Entities;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
+
+namespace Ecom.Auth.Infrastructure.Persistence.Configurations;
+
+public class AuditLogConfiguration : IEntityTypeConfiguration<AuditLog>
+{
+    public void Configure(EntityTypeBuilder<AuditLog> builder)
+    {
+        // Primary Key
+        builder.HasKey(a => a.Id);
+
+        // Properties
+        builder.Property(a => a.Email)
+            .IsRequired()
+            .HasMaxLength(150);
+
+        builder.Property(a => a.Action)
+            .IsRequired()
+            .HasMaxLength(50);
+
+        builder.Property(a => a.Status)
+            .IsRequired()
+            .HasMaxLength(20);
+
+        builder.Property(a => a.IpAddress)
+            .IsRequired()
+            .HasMaxLength(50);
+
+        // No foreign key relationship (allows logging for deleted users)
+    }
+}
+
+================================================================================
+SECTION 6: RELATIONSHIPS & CONSTRAINTS
+================================================================================
+
+6.1 ONE-TO-MANY RELATIONSHIPS
+------------------------------
+
+1. Role → Users
+   - Relationship: One role can have many users
+   - Foreign Key: User.RoleId → Role.Id
+   - Delete Behavior: Restrict (cannot delete role if users exist)
+   - Navigation: Role.Users (collection), User.Role (reference)
+
+2. User → RefreshTokens
+   - Relationship: One user can have many refresh tokens
+   - Foreign Key: RefreshToken.UserId → User.Id
+   - Delete Behavior: Cascade (deleting user removes all tokens)
+   - Navigation: User.RefreshTokens (collection), RefreshToken.User (reference)
+   - Use Case: Multi-device login support
+
+3. User → EmailVerificationTokens
+   - Relationship: One user can have many verification tokens
+   - Foreign Key: EmailVerificationToken.UserId → User.Id
+   - Delete Behavior: Cascade (deleting user removes all tokens)
+   - Navigation: User.EmailVerificationTokens (collection), EmailVerificationToken.User (reference)
+   - Use Case: Email verification, password reset
+
+6.2 CONSTRAINTS & INDEXES
+--------------------------
+
+PRIMARY KEYS:
+- All tables have auto-increment INT primary key (Id)
+
+UNIQUE CONSTRAINTS:
+- Roles.RoleName (UNIQUE)
+- Users.Email (UNIQUE)
+- RefreshTokens.Token (UNIQUE)
+
+FOREIGN KEYS:
+- Users.RoleId → Roles.Id (ON DELETE RESTRICT)
+- RefreshTokens.UserId → Users.Id (ON DELETE CASCADE)
+- EmailVerificationTokens.UserId → Users.Id (ON DELETE CASCADE)
+
+NOT NULL CONSTRAINTS:
+- All entity properties except:
+  - User.LockoutEnd (nullable)
+  - User.UpdatedAt (nullable)
+  - AuditLog.UserId (nullable)
+
+DEFAULT VALUES:
+- User.IsActive = true
+- User.IsDeleted = false
+- User.IsEmailVerified = false
+- User.FailedLoginAttempts = 0
+- RefreshToken.IsRevoked = false
+- EmailVerificationToken.IsUsed = false
+- All CreatedAt fields = DateTime.UtcNow
+
+6.3 DATA INTEGRITY RULES
+-------------------------
+
+1. Email Uniqueness
+   - Enforced at database level (UNIQUE INDEX)
+   - Checked in application layer before insert
+
+2. Role Validation
+   - User must have valid RoleId
+   - Cannot delete role if users exist (RESTRICT)
+
+3. Token Uniqueness
+   - Refresh tokens must be unique (UNIQUE INDEX)
+   - Prevents token collision
+
+4. Cascade Deletion
+   - Deleting user removes all refresh tokens
+   - Deleting user removes all verification tokens
+   - Audit logs remain (no FK constraint)
+
+5. Soft Delete
+   - Users are soft-deleted (IsDeleted = true)
+   - Physical deletion not implemented
+   - Allows audit trail preservation
+
+================================================================================
+SECTION 7: MIGRATION STEPS
+================================================================================
+
+7.1 INITIAL SETUP
+-----------------
+
+1. Install EF Core Tools:
+   dotnet tool install --global dotnet-ef
+
+2. Add Connection String (appsettings.json):
+   {
+     "ConnectionStrings": {
+       "AuthDb": "Server=localhost;Database=EcomAuthDb;Trusted_Connection=True;TrustServerCertificate=True;"
+     }
+   }
+
+3. Register DbContext (Program.cs):
+   builder.Services.AddDbContext<AuthDbContext>(opt =>
+       opt.UseSqlServer(builder.Configuration.GetConnectionString("AuthDb")));
+
+7.2 CREATE INITIAL MIGRATION
+-----------------------------
+
+Command:
+cd Ecom.Auth.Infrastructure
+dotnet ef migrations add InitialCreate --startup-project ../Ecom.Auth.API
+
+This generates:
+- Migrations/YYYYMMDDHHMMSS_InitialCreate.cs
+- Migrations/AuthDbContextModelSnapshot.cs
+
+7.3 APPLY MIGRATION TO DATABASE
+--------------------------------
+
+Command:
+dotnet ef database update --startup-project ../Ecom.Auth.API
+
+This creates:
+- Database: EcomAuthDb
+- Tables: Roles, Users, RefreshTokens, EmailVerificationTokens, AuditLogs
+- Seed data: 4 roles (Admin, ProductManager, ContentExecutive, Customer)
+
+7.4 ADD NEW MIGRATION (EXAMPLE)
+--------------------------------
+
+When modifying entities:
+
+1. Update entity class
+2. Update configuration (if needed)
+3. Create migration:
+   dotnet ef migrations add AddUserLockoutFields --startup-project ../Ecom.Auth.API
+
+4. Review generated migration
+5. Apply to database:
+   dotnet ef database update --startup-project ../Ecom.Auth.API
+
+7.5 ROLLBACK MIGRATION
+-----------------------
+
+Rollback to previous migration:
+dotnet ef database update PreviousMigrationName --startup-project ../Ecom.Auth.API
+
+Remove last migration (if not applied):
+dotnet ef migrations remove --startup-project ../Ecom.Auth.API
+
+7.6 GENERATE SQL SCRIPT
+------------------------
+
+Generate SQL without applying:
+dotnet ef migrations script --startup-project ../Ecom.Auth.API --output migration.sql
+
+Generate SQL for specific range:
+dotnet ef migrations script FromMigration ToMigration --startup-project ../Ecom.Auth.API
+
+7.7 PRODUCTION DEPLOYMENT
+--------------------------
+
+1. Generate SQL script:
+   dotnet ef migrations script --idempotent --startup-project ../Ecom.Auth.API --output deploy.sql
+
+2. Review SQL script
+3. Apply via SQL Server Management Studio or deployment pipeline
+4. Verify schema changes
+
+7.8 MIGRATION BEST PRACTICES
+-----------------------------
+
+1. Always review generated migrations before applying
+2. Use meaningful migration names
+3. Test migrations on dev/staging before production
+4. Use --idempotent flag for production scripts
+5. Backup database before applying migrations
+6. Never modify applied migrations
+7. Use transactions for complex migrations
+
+================================================================================
+SECTION 8: SECURITY CONFIGURATION
+================================================================================
+
+8.1 PASSWORD HASHING (BCRYPT)
+------------------------------
+
+Implementation:
+- Library: BCrypt.Net-Next
+- Cost Factor: 11 (default)
+- Algorithm: Blowfish-based adaptive hash
+
+Usage:
+// Hash password
+string hash = BCrypt.Net.BCrypt.HashPassword(password);
+
+// Verify password
+bool isValid = BCrypt.Net.BCrypt.Verify(password, hash);
+
+Security Features:
+- Salted hashing (unique salt per password)
+- Adaptive cost factor (increases with hardware improvements)
+- Resistant to rainbow table attacks
+- Timing-safe comparison
+
+Password Validation Rules:
+- Minimum 8 characters
+- At least 1 uppercase letter
+- At least 1 lowercase letter
+- At least 1 digit
+- At least 1 special character
+
+8.2 JWT CONFIGURATION
+---------------------
+
+Token Structure:
+- Header: Algorithm (HS256), Type (JWT)
+- Payload: Claims (UserId, Email, Role)
+- Signature: HMAC-SHA256
+
+Configuration (appsettings.json):
+{
+  "Jwt": {
+    "Key": "YOUR_SECRET_KEY_HERE_MINIMUM_32_CHARACTERS",
+    "Issuer": "EcomAuthService",
+    "Audience": "EcomClients",
+    "ExpiryMinutes": 15,
+    "RefreshTokenExpiryDays": 7
+  }
+}
+
+Environment Variables (Production):
+- JWT_KEY: Secret key (minimum 32 characters)
+- SMTP_PASSWORD: Email service password
+
+Program.cs Configuration:
+var jwtKey = builder.Configuration["Jwt:Key"]
+    ?? throw new InvalidOperationException("JWT Key is not configured.");
+
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidateAudience = true,
+            ValidateLifetime = true,
+            ValidateIssuerSigningKey = true,
+            ValidIssuer = builder.Configuration["Jwt:Issuer"],
+            ValidAudience = builder.Configuration["Jwt:Audience"],
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
+            ClockSkew = TimeSpan.Zero  // No tolerance
+        };
+    });
+
+JWT Claims:
+- NameIdentifier: User.Id
+- Name: User.Name
+- Email: User.Email
+- Role: User.Role.RoleName
+
+8.3 REFRESH TOKEN SECURITY
+---------------------------
+
+Token Generation:
+- Cryptographically random (GUID-based)
+- URL-safe encoding (Base64 with replacements)
+- 512-character maximum length
+- Unique constraint in database
+
+Security Features:
+1. Token Rotation: One-time use, new token on refresh
+2. Reuse Detection: Revokes all sessions if stolen token reused
+3. Expiration: 7-day sliding window
+4. Revocation: Manual logout, logout-all
+5. Cascade Deletion: Tokens deleted with user
+
+8.4 RATE LIMITING
+-----------------
+
+Policies:
+1. Login: 5 requests/minute per IP
+2. Forgot Password: 3 requests/minute per IP
+3. Refresh Token: 10 requests/minute per IP
+4. Admin Endpoints: 20 requests/minute per user
+
+Implementation:
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    
+    options.AddPolicy("login", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 5,
+                Window = TimeSpan.FromMinutes(1)
+            }));
+});
+
+Usage:
+[EnableRateLimiting("login")]
+public async Task<IActionResult> Login([FromBody] LoginRequestDto request)
+
+8.5 ACCOUNT LOCKOUT
+-------------------
+
+Configuration:
+- Max Failed Attempts: 5
+- Lockout Duration: 30 minutes
+
+Logic:
+1. Failed login increments FailedLoginAttempts
+2. After 5 failures, set LockoutEnd = UtcNow + 30 minutes
+3. Successful login resets FailedLoginAttempts and LockoutEnd
+4. Locked accounts cannot login until LockoutEnd expires
+
+8.6 TIMING ATTACK PREVENTION
+-----------------------------
+
+Implementation:
+var fakeHash = "$2a$11$abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQR";
+
+if (user == null || user.IsDeleted)
+{
+    BCrypt.Net.BCrypt.Verify(request.Password, fakeHash);
+    throw new UnauthorizedException("Invalid credentials.");
+}
+
+Purpose:
+- Prevents email enumeration via response time analysis
+- Always performs hash verification (constant time)
+
+8.7 CORS CONFIGURATION
+----------------------
+
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowAngular", policy =>
+        policy.WithOrigins("http://localhost:4200")
+              .AllowAnyHeader()
+              .AllowAnyMethod());
+});
+
+Production:
+- Restrict origins to production domains
+- Use HTTPS only
+- Specify allowed methods explicitly
+
+8.8 SECURITY HEADERS
+--------------------
+
+Middleware:
+app.Use(async (context, next) =>
+{
+    context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+    context.Response.Headers["X-Frame-Options"] = "DENY";
+    context.Response.Headers["X-XSS-Protection"] = "1; mode=block";
+    context.Response.Headers["Referrer-Policy"] = "no-referrer";
+    context.Response.Headers["Content-Security-Policy"] = "default-src 'self'";
+    context.Response.Headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains";
+    await next();
+});
+
+8.9 EMAIL VERIFICATION
+----------------------
+
+Security Features:
+- 6-digit OTP (cryptographically random)
+- 24-hour expiry for email verification
+- 1-hour expiry for password reset
+- One-time use (IsUsed flag)
+- Token invalidation after use
+
+8.10 AUDIT LOGGING
+------------------
+
+Events Logged:
+- All authentication attempts (success/failure)
+- Password changes
+- Role changes
+- Account status changes
+- Token operations
+
+Storage:
+- Database (AuditLogs table)
+- Serilog (Logs table)
+- RabbitMQ events (for distributed systems)
+
+================================================================================
+SECTION 9: API ENDPOINTS
+================================================================================
+
+BASE URL: https://localhost:7001/api/v1/auth
+
+9.1 PUBLIC ENDPOINTS (NO AUTH REQUIRED)
+----------------------------------------
+
+POST /signup
+- Description: Register new user
+- Request Body: { name, email, password, roleId }
+- Response: { userId, email, message }
+- Rate Limit: None
+- Validation: Email unique, password strength, role exists
+
+POST /login
+- Description: Authenticate user
+- Request Body: { email, password }
+- Response: { accessToken, refreshToken, expiresAt, role, redirectTo }
+- Rate Limit: 5 requests/minute per IP
+- Security: Account lockout after 5 failures
+
+POST /refresh
+- Description: Refresh access token
+- Request Body: { token }
+- Response: { accessToken, refreshToken, expiresAt, role, redirectTo }
+- Rate Limit: 10 requests/minute per IP
+- Security: Token rotation, reuse detection
+
+GET /verify-email?token={token}
+- Description: Verify email address
+- Query Param: token (6-digit OTP)
+- Response: { message }
+- Security: One-time use, 24-hour expiry
+
+POST /resend-verification
+- Description: Resend email verification
+- Request Body: { email }
+- Response: { message }
+- Rate Limit: 3 requests/minute per IP
+- Security: Silent fail (prevent enumeration)
+
+POST /forgot-password
+- Description: Request password reset
+- Request Body: { email }
+- Response: { message }
+- Rate Limit: 3 requests/minute per IP
+- Security: Silent fail (prevent enumeration)
+
+POST /reset-password
+- Description: Reset password with token
+- Request Body: { email, token, newPassword }
+- Response: { message }
+- Security: One-time use, 1-hour expiry
+
+9.2 AUTHENTICATED ENDPOINTS (JWT REQUIRED)
+-------------------------------------------
+
+GET /me
+- Description: Get current user info
+- Authorization: Bearer {accessToken}
+- Response: { userId, email, role }
+
+POST /logout
+- Description: Logout from current session
+- Authorization: Bearer {accessToken}
+- Request Body: { token }
+- Response: { message }
+
+POST /logout-all
+- Description: Logout from all sessions
+- Authorization: Bearer {accessToken}
+- Response: { message }
+
+POST /change-password
+- Description: Change password
+- Authorization: Bearer {accessToken}
+- Request Body: { currentPassword, newPassword }
+- Response: { message }
+
+9.3 ADMIN ENDPOINTS (ROLE: ADMIN)
+----------------------------------
+
+GET /api/v1/users
+- Description: Get all users (paginated)
+- Authorization: Bearer {accessToken} (Admin only)
+- Query Params: page, pageSize, search, roleId
+- Response: { users[], totalCount, page, pageSize }
+- Rate Limit: 20 requests/minute
+
+PUT /api/v1/users/{id}/role
+- Description: Change user role
+- Authorization: Bearer {accessToken} (Admin only)
+- Request Body: { roleId }
+- Response: { message }
+
+PUT /api/v1/users/{id}/status
+- Description: Activate/deactivate user
+- Authorization: Bearer {accessToken} (Admin only)
+- Request Body: { isActive }
+- Response: { message }
+
+GET /api/v1/admin/audit-logs
+- Description: Get audit logs (filtered)
+- Authorization: Bearer {accessToken} (Admin only)
+- Query Params: userId, action, status, startDate, endDate, page, pageSize
+- Response: { logs[], totalCount, page, pageSize }
+
+POST /api/v1/admin/audit-logs/export
+- Description: Export audit logs to CSV
+- Authorization: Bearer {accessToken} (Admin only)
+- Request Body: { filters }
+- Response: CSV file download
+
+9.4 RESPONSE FORMATS
+--------------------
+
+Success Response:
+{
+  "status": 200,
+  "message": "Operation successful",
+  "data": { ... }
+}
+
+Error Response:
+{
+  "status": 400,
+  "message": "Validation failed",
+  "errors": [
+    {
+      "field": "Email",
+      "errors": ["Email is required"]
+    }
+  ]
+}
+
+Validation Error (FluentValidation):
+{
+  "status": 400,
+  "message": "Validation failed",
+  "errors": [
+    {
+      "field": "Password",
+      "errors": [
+        "Password must be at least 8 characters",
+        "Password must contain uppercase letter"
+      ]
+    }
+  ]
+}
+
+================================================================================
+SECTION 10: MIDDLEWARE PIPELINE
+================================================================================
+
+Middleware Order (CRITICAL):
+
+1. ExceptionHandlingMiddleware
+   - Global exception handler
+   - Catches all unhandled exceptions
+   - Returns standardized error responses
+
+2. CorrelationIdMiddleware
+   - Generates/extracts correlation ID
+   - Adds to HttpContext.Items
+   - Used for distributed tracing
+
+3. Security Headers Middleware
+   - X-Content-Type-Options: nosniff
+   - X-Frame-Options: DENY
+   - X-XSS-Protection: 1; mode=block
+   - Content-Security-Policy
+   - Strict-Transport-Security (HSTS)
+
+4. RequestLoggingMiddleware
+   - Logs HTTP method, path, status code
+   - Logs request duration
+   - Includes correlation ID
+
+5. Swagger (Development only)
+   - API documentation
+   - Interactive testing
+
+6. HTTPS Redirection
+   - Redirects HTTP to HTTPS
+
+7. CORS
+   - Cross-origin resource sharing
+   - Configured for Angular frontend
+
+8. Rate Limiter
+   - Enforces rate limiting policies
+   - Returns 429 on limit exceeded
+
+9. Authentication
+   - JWT token validation
+   - Populates User claims
+
+10. UserLoggingMiddleware
+    - Logs authenticated user info
+    - Extracts user ID from JWT
+
+11. AuditMiddleware
+    - Logs user actions to AuditLogs table
+    - Captures IP address
+
+12. Authorization
+    - Role-based access control
+    - Enforces [Authorize] attributes
+
+13. Controllers
+    - Route to appropriate endpoint
+
+================================================================================
+END OF DOCUMENTATION
+================================================================================
+
+SUMMARY:
+--------
+This authentication microservice implements:
+✓ Clean Architecture (4 layers)
+✓ Domain-Driven Design (DDD)
+✓ Entity Framework Core (Code-First)
+✓ JWT Authentication with Refresh Tokens
+✓ Role-Based Authorization
+✓ BCrypt Password Hashing
+✓ Email Verification
+✓ Password Reset
+✓ Account Lockout
+✓ Rate Limiting
+✓ Audit Logging
+✓ Security Best Practices
+✓ Comprehensive API Documentation
+
+DATABASE TABLES: 5 core tables + 1 logging table
+ENTITIES: 5 domain entities with relationships
+MIGRATIONS: Code-First approach with EF Core
+SECURITY: Industry-standard practices implemented
+
+This documentation is interview-ready and production-ready.
+
+================================================================================
+
+
+
+
+
+
+
+
+
+
+
+Generated: auth_db.txt
+The document contains 10 detailed sections covering:
+
+Architecture Overview - Complete breakdown of Clean Architecture layers with responsibilities and dependency flow
+
+Authentication Flow - Step-by-step flows for:
+
+User Registration with email verification
+Login with JWT tokens
+Refresh token rotation with reuse detection
+Logout (single & all sessions)
+Forgot/Reset password
+Change password
+Database Design - Complete table structures with:
+
+5 core tables (Roles, Users, RefreshTokens, EmailVerificationTokens, AuditLogs)
+Column definitions with data types and constraints
+Entity Relationship Diagram (ERD)
+Seed data for roles
+Entity Models - Full C# code for all 5 entities with navigation properties
+
+DbContext & Fluent API - Complete configurations for:
+
+AuthDbContext
+All entity configurations with constraints
+Relationships and indexes
+Relationships & Constraints - Detailed explanation of:
+
+One-to-Many relationships
+Foreign keys with cascade behaviors
+Unique constraints and indexes
+Data integrity rules
+Migration Steps - Complete EF Core migration guide:
+
+Initial setup commands
+Creating and applying migrations
+Rollback procedures
+Production deployment strategies
+Security Configuration - Industry-standard security:
+
+BCrypt password hashing
+JWT configuration with claims
+Refresh token security with rotation
+Rate limiting policies
+Account lockout mechanism
+Timing attack prevention
+CORS and security headers
+API Endpoints - Complete API documentation:
+
+Public endpoints (signup, login, verify)
+Authenticated endpoints (logout, change password)
+Admin endpoints (user management, audit logs)
+Request/response formats
+Middleware Pipeline - Ordered middleware chain with explanations
+
+The documentation is structured for multiple use cases:
+
+Interview preparation - Explains architecture decisions
+Implementation guide - Ready-to-use code snippets
+Database reference - Complete schema documentation
+Security audit - All security measures documented
+All content is based on your actual project structure and follows industry best practices for Clean Architecture and DDD.

@@ -1,0 +1,6 @@
+{
+  "Routes": [],
+  "GlobalConfiguration": {
+    "BaseUrl": "https://staging.ecom-gateway.com"
+  }
+}

@@ -1,0 +1,1843 @@
+================================================================================
+                    ECOM API GATEWAY DOCUMENTATION
+================================================================================
+                    Enterprise-Grade API Gateway using Ocelot
+                    Centralized Routing, Authentication & Request Management
+================================================================================
+
+TABLE OF CONTENTS
+-----------------
+1. Overview
+2. What is an API Gateway?
+3. Complete Folder Structure
+4. File-by-File Breakdown
+5. Ocelot Configuration Deep Dive
+6. Routing & Request Flow
+7. Authentication & Authorization
+8. Middleware Pipeline
+9. Environment-Based Configuration
+10. Build Output & Intermediate Files
+11. Docker Configuration
+12. Request Flow Diagram
+13. Benefits & Trade-offs
+14. Deployment Guide
+
+
+================================================================================
+1. OVERVIEW
+================================================================================
+
+The Ecom.Gateway is a production-ready API Gateway built using Ocelot, a
+powerful .NET library for building API Gateways in microservices architectures.
+
+CORE RESPONSIBILITIES:
+✓ Single entry point for all client requests
+✓ Route requests to appropriate downstream microservices
+✓ Centralized authentication and authorization
+✓ Request/response logging and correlation tracking
+✓ Load balancing and service discovery (configurable)
+✓ Rate limiting and throttling (configurable)
+✓ Request transformation and aggregation (configurable)
+
+Technology Stack:
+- .NET 8.0
+- Ocelot 23.0.0 (API Gateway library)
+- JWT Bearer Authentication
+- Docker containerization
+
+DOWNSTREAM SERVICES:
+- Auth Service (port 80, container: auth)
+- Catalog Service (port 80, container: catalog)
+- Workflow Service (port 80, container: workflow)
+- Reporting Service (port 80, container: reporting)
+
+
+================================================================================
+2. WHAT IS AN API GATEWAY?
+================================================================================
+
+
+AN API GATEWAY IS A REVERSE PROXY:
+  - Sits between clients and backend microservices
+  - Acts as a single entry point for all API requests
+  - Routes requests to appropriate downstream services
+  - Handles cross-cutting concerns (auth, logging, rate limiting)
+
+WHY USE AN API GATEWAY?
+
+✓ SIMPLIFIED CLIENT EXPERIENCE:
+  - Clients only need to know one endpoint (gateway)
+  - No need to track multiple service URLs
+  - Consistent API interface
+
+✓ CENTRALIZED SECURITY:
+  - Single point for authentication/authorization
+  - JWT validation happens once at gateway
+  - Downstream services trust gateway-forwarded requests
+
+✓ REDUCED NETWORK CALLS:
+  - Gateway can aggregate multiple service calls
+  - Reduces client-to-service round trips
+  - Improves performance
+
+✓ CROSS-CUTTING CONCERNS:
+  - Logging and monitoring in one place
+  - Rate limiting and throttling
+  - Request/response transformation
+  - Caching
+
+✓ SERVICE ISOLATION:
+  - Downstream services not exposed directly
+  - Gateway handles service discovery
+  - Easy to change service locations
+
+COMMON API GATEWAY PATTERNS:
+  - Backend for Frontend (BFF): Different gateways for web, mobile, etc.
+  - Aggregation: Combine multiple service responses
+  - Transformation: Modify requests/responses
+  - Protocol Translation: HTTP to gRPC, etc.
+
+
+================================================================================
+3. COMPLETE FOLDER STRUCTURE
+================================================================================
+
+Ecom.Gateway/
+│
+├── bin/                                 # Build output directory
+│   └── Debug/
+│       └── net8.0/
+│           ├── Ecom.Gateway.dll         # Compiled gateway assembly
+│           ├── Ecom.Gateway.exe         # Executable entry point
+│           ├── Ocelot.dll               # Ocelot library
+│           ├── FluentValidation.dll     # Validation library (Ocelot dependency)
+│           ├── Microsoft.AspNetCore.Authentication.JwtBearer.dll  # JWT auth
+│           ├── Microsoft.IdentityModel.Tokens.dll                 # Token validation
+│           ├── System.IdentityModel.Tokens.Jwt.dll                # JWT handling
+│           ├── Newtonsoft.Json.dll      # JSON serialization
+│           └── [other dependencies]     # Additional runtime dependencies
+│
+├── obj/                                 # Intermediate build files
+│   ├── Debug/
+│   │   └── net8.0/
+│   │       ├── Ecom.Gateway.assets.cache           # NuGet package cache
+│   │       ├── Ecom.Gateway.csproj.FileListAbsolute.txt  # Build file list
+│   │       ├── Ecom.Gateway.GlobalUsings.g.cs      # Auto-generated global usings
+│   │       ├── ApiEndpoints.json                   # Discovered API endpoints
+│   │       ├── apphost.exe                         # Development host
+│   │       ├── ref/                                # Reference assemblies
+│   │       ├── refint/                             # Reference intermediate files
+│   │       └── staticwebassets/                    # Static web assets
+│   ├── Ecom.Gateway.csproj.nuget.dgspec.json       # NuGet dependency graph
+│   ├── Ecom.Gateway.csproj.nuget.g.props           # NuGet properties
+│   ├── Ecom.Gateway.csproj.nuget.g.targets         # NuGet targets
+│   ├── project.assets.json                         # Project dependencies
+│   └── project.nuget.cache                         # NuGet cache
+│
+├── Middleware/
+│   └── GatewayLoggingMiddleware.cs      # Custom logging middleware
+│
+├── Properties/
+│   └── launchSettings.json              # Development launch configuration
+│
+├── appsettings.json                     # Production configuration
+├── appsettings.Development.json         # Development configuration
+├── ocelot.json                          # Ocelot routing configuration (main)
+├── ocelot.staging.json                  # Ocelot staging configuration
+├── Program.cs                           # Application entry point
+├── Dockerfile                           # Docker containerization
+└── Ecom.Gateway.csproj                  # Project file
+
+
+================================================================================
+4. FILE-BY-FILE BREAKDOWN
+================================================================================
+
+
+─────────────────────────────────────────────────────────────────────────────
+4.1 PROGRAM.CS (APPLICATION ENTRY POINT)
+─────────────────────────────────────────────────────────────────────────────
+
+📁 Program.cs
+LOCATION: Ecom.Gateway/
+PURPOSE: Application startup, dependency injection, middleware pipeline
+RESPONSIBILITY:
+  - Configure Ocelot with routing files
+  - Configure JWT authentication
+  - Register services
+  - Build middleware pipeline
+  - Start application
+
+CODE BREAKDOWN:
+
+1. CREATE WEB APPLICATION BUILDER:
+   var builder = WebApplication.CreateBuilder(args);
+   - Creates the application host
+   - Loads default configuration
+
+2. LOAD OCELOT CONFIGURATION:
+   builder.Configuration
+       .AddJsonFile("ocelot.json", optional: false, reloadOnChange: true)
+       .AddJsonFile($"ocelot.{builder.Environment.EnvironmentName}.json", optional: true);
+   
+   EXPLANATION:
+   - Loads ocelot.json (required, reloads on change)
+   - Loads environment-specific config (optional)
+   - Example: In Development, loads ocelot.Development.json
+   - Example: In Staging, loads ocelot.staging.json
+   - Environment-specific config overrides base config
+
+3. CONFIGURE JWT AUTHENTICATION:
+   var jwtSecret = builder.Configuration["Jwt:Secret"]
+       ?? throw new InvalidOperationException("Jwt:Secret is not configured.");
+   
+   builder.Services
+       .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+       .AddJwtBearer("Bearer", options => { ... });
+   
+   EXPLANATION:
+   - Reads JWT secret from appsettings.json
+   - Configures JWT Bearer authentication scheme
+   - Named "Bearer" (referenced in ocelot.json)
+   - Validates issuer, audience, lifetime, signing key
+   - ClockSkew = TimeSpan.Zero (no tolerance for expired tokens)
+
+4. REGISTER OCELOT:
+   builder.Services.AddOcelot();
+   - Registers Ocelot services in DI container
+   - Enables routing, middleware, and configuration
+
+5. BUILD APPLICATION:
+   var app = builder.Build();
+   - Builds the application with configured services
+
+6. CONFIGURE MIDDLEWARE PIPELINE:
+   app.UseMiddleware<GatewayLoggingMiddleware>();  // Custom logging
+   app.UseAuthentication();                        // JWT validation
+   await app.UseOcelot();                          // Ocelot routing
+   app.Run();                                      // Start server
+   
+   MIDDLEWARE ORDER (CRITICAL):
+   1. GatewayLoggingMiddleware → Log all requests
+   2. UseAuthentication → Validate JWT tokens
+   3. UseOcelot → Route to downstream services
+   
+   WHY THIS ORDER:
+   - Logging first to capture all requests
+   - Authentication before routing (security)
+   - Ocelot last to handle routing after auth
+
+
+─────────────────────────────────────────────────────────────────────────────
+4.2 OCELOT.JSON (MAIN ROUTING CONFIGURATION)
+─────────────────────────────────────────────────────────────────────────────
+
+📁 ocelot.json
+LOCATION: Ecom.Gateway/
+PURPOSE: Define routing rules for all downstream services
+RESPONSIBILITY:
+  - Map upstream paths (client requests) to downstream paths (services)
+  - Configure authentication requirements
+  - Define HTTP methods allowed
+  - Specify downstream service locations
+
+STRUCTURE:
+{
+  "Routes": [ ... ],           // Array of routing rules
+  "GlobalConfiguration": { ... } // Global settings
+}
+
+
+ROUTE 1: AUTH SERVICE (NO AUTHENTICATION REQUIRED)
+{
+  "DownstreamPathTemplate": "/api/auth/{everything}",
+  "DownstreamScheme": "http",
+  "DownstreamHostAndPorts": [ { "Host": "auth", "Port": 80 } ],
+  "UpstreamPathTemplate": "/gateway/auth/{everything}",
+  "UpstreamHttpMethod": [ "GET", "POST", "PUT", "DELETE" ]
+}
+
+EXPLANATION:
+- UpstreamPathTemplate: Client requests to /gateway/auth/*
+- DownstreamPathTemplate: Forwarded to /api/auth/* on auth service
+- {everything}: Wildcard captures all path segments
+- DownstreamHostAndPorts: Service location (Docker container name: auth)
+- UpstreamHttpMethod: Allowed HTTP methods
+- NO AuthenticationOptions: Public endpoints (login, signup)
+
+EXAMPLE:
+  Client: GET /gateway/auth/users/123
+  Gateway: GET http://auth:80/api/auth/users/123
+
+
+ROUTE 2: CATALOG SERVICE (AUTHENTICATION REQUIRED)
+{
+  "DownstreamPathTemplate": "/api/{everything}",
+  "DownstreamScheme": "http",
+  "DownstreamHostAndPorts": [ { "Host": "catalog", "Port": 80 } ],
+  "UpstreamPathTemplate": "/gateway/catalog/{everything}",
+  "UpstreamHttpMethod": [ "GET", "POST", "PUT", "DELETE" ],
+  "AuthenticationOptions": {
+    "AuthenticationProviderKey": "Bearer"
+  }
+}
+
+EXPLANATION:
+- UpstreamPathTemplate: Client requests to /gateway/catalog/*
+- DownstreamPathTemplate: Forwarded to /api/* on catalog service
+- AuthenticationOptions: Requires JWT Bearer token
+- AuthenticationProviderKey: "Bearer" (matches Program.cs config)
+- Gateway validates JWT before forwarding
+
+EXAMPLE:
+  Client: GET /gateway/catalog/products/123
+  Headers: Authorization: Bearer <JWT>
+  Gateway: Validates JWT → GET http://catalog:80/api/products/123
+
+
+ROUTE 3: WORKFLOW SERVICE (AUTHENTICATION REQUIRED)
+{
+  "DownstreamPathTemplate": "/api/{everything}",
+  "DownstreamScheme": "http",
+  "DownstreamHostAndPorts": [ { "Host": "workflow", "Port": 80 } ],
+  "UpstreamPathTemplate": "/gateway/workflow/{everything}",
+  "UpstreamHttpMethod": [ "GET", "POST", "PUT", "DELETE" ],
+  "AuthenticationOptions": {
+    "AuthenticationProviderKey": "Bearer"
+  }
+}
+
+EXPLANATION:
+- UpstreamPathTemplate: Client requests to /gateway/workflow/*
+- DownstreamPathTemplate: Forwarded to /api/* on workflow service
+- Requires JWT authentication
+
+EXAMPLE:
+  Client: POST /gateway/workflow/products/123/approve
+  Headers: Authorization: Bearer <JWT>
+  Gateway: Validates JWT → POST http://workflow:80/api/products/123/approve
+
+
+ROUTE 4: REPORTING SERVICE (AUTHENTICATION REQUIRED)
+{
+  "DownstreamPathTemplate": "/api/{everything}",
+  "DownstreamScheme": "http",
+  "DownstreamHostAndPorts": [ { "Host": "reporting", "Port": 80 } ],
+  "UpstreamPathTemplate": "/gateway/admin/{everything}",
+  "UpstreamHttpMethod": [ "GET", "POST" ],
+  "AuthenticationOptions": {
+    "AuthenticationProviderKey": "Bearer"
+  }
+}
+
+EXPLANATION:
+- UpstreamPathTemplate: Client requests to /gateway/admin/*
+- DownstreamPathTemplate: Forwarded to /api/* on reporting service
+- UpstreamHttpMethod: Only GET and POST (read-only + export)
+- Requires JWT authentication
+
+EXAMPLE:
+  Client: GET /gateway/admin/reports/dashboard
+  Headers: Authorization: Bearer <JWT>
+  Gateway: Validates JWT → GET http://reporting:80/api/reports/dashboard
+
+
+GLOBAL CONFIGURATION:
+{
+  "GlobalConfiguration": {
+    "BaseUrl": "http://localhost:5000"
+  }
+}
+
+EXPLANATION:
+- BaseUrl: Gateway's public URL
+- Used for generating links and redirects
+- In production, set to actual domain (e.g., https://api.ecom.com)
+
+
+─────────────────────────────────────────────────────────────────────────────
+4.3 OCELOT.STAGING.JSON (STAGING CONFIGURATION)
+─────────────────────────────────────────────────────────────────────────────
+
+📁 ocelot.staging.json
+LOCATION: Ecom.Gateway/
+PURPOSE: Override configuration for staging environment
+RESPONSIBILITY:
+  - Override base configuration for staging
+  - Change BaseUrl to staging domain
+  - Can override routes, hosts, ports
+
+CONTENT:
+{
+  "Routes": [],
+  "GlobalConfiguration": {
+    "BaseUrl": "https://staging.ecom-gateway.com"
+  }
+}
+
+EXPLANATION:
+- Empty Routes array: Uses routes from ocelot.json
+- BaseUrl overridden for staging environment
+- Loaded when ASPNETCORE_ENVIRONMENT=Staging
+
+USAGE:
+- In staging, both ocelot.json and ocelot.staging.json are loaded
+- ocelot.staging.json overrides matching settings
+- Allows environment-specific configuration without duplicating routes
+
+
+─────────────────────────────────────────────────────────────────────────────
+4.4 APPSETTINGS.JSON (PRODUCTION CONFIGURATION)
+─────────────────────────────────────────────────────────────────────────────
+
+📁 appsettings.json
+LOCATION: Ecom.Gateway/
+PURPOSE: Application configuration (JWT, logging)
+RESPONSIBILITY:
+  - Configure JWT authentication settings
+  - Configure logging levels
+  - Store non-routing configuration
+
+CONTENT:
+{
+  "Jwt": {
+    "Secret": "dev-super-secret-key-change-in-prod-32chars!!",
+    "Issuer": "ecom-auth-service",
+    "Audience": "ecom-clients"
+  },
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Warning"
+    }
+  }
+}
+
+EXPLANATION:
+
+JWT CONFIGURATION:
+- Secret: Signing key for JWT validation (MUST match Auth service)
+- Issuer: Expected token issuer (MUST match Auth service)
+- Audience: Expected token audience (MUST match Auth service)
+- SECURITY: Change Secret in production, use environment variables
+
+LOGGING CONFIGURATION:
+- Default: Information level for application logs
+- Microsoft.AspNetCore: Warning level (reduce noise)
+
+
+
+─────────────────────────────────────────────────────────────────────────────
+4.5 APPSETTINGS.DEVELOPMENT.JSON (DEVELOPMENT CONFIGURATION)
+─────────────────────────────────────────────────────────────────────────────
+
+📁 appsettings.Development.json
+LOCATION: Ecom.Gateway/
+PURPOSE: Override configuration for development environment
+RESPONSIBILITY:
+  - Enable verbose logging for debugging
+  - Override production settings
+
+CONTENT:
+{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Debug",
+      "Ocelot": "Debug"
+    }
+  }
+}
+
+EXPLANATION:
+- Default: Debug level (more verbose)
+- Ocelot: Debug level (see Ocelot internal logs)
+- Loaded when ASPNETCORE_ENVIRONMENT=Development
+- Helps troubleshoot routing issues
+
+
+─────────────────────────────────────────────────────────────────────────────
+4.6 MIDDLEWARE/GATEWAYLOGGINGMIDDLEWARE.CS
+─────────────────────────────────────────────────────────────────────────────
+
+📁 GatewayLoggingMiddleware.cs
+LOCATION: Ecom.Gateway/Middleware/
+PURPOSE: Log all incoming requests and outgoing responses
+RESPONSIBILITY:
+  - Generate correlation ID for request tracking
+  - Log request method, path, correlation ID
+  - Log response status code
+  - Add correlation ID to request headers
+
+CODE BREAKDOWN:
+
+public class GatewayLoggingMiddleware
+{
+    private readonly RequestDelegate _next;
+    private readonly ILogger<GatewayLoggingMiddleware> _logger;
+
+    public GatewayLoggingMiddleware(RequestDelegate next, ILogger<GatewayLoggingMiddleware> logger)
+    {
+        _next = next;
+        _logger = logger;
+    }
+
+    public async Task InvokeAsync(HttpContext context)
+    {
+        // 1. Generate unique correlation ID
+        var correlationId = Guid.NewGuid().ToString();
+        context.Request.Headers["X-Correlation-Id"] = correlationId;
+
+        // 2. Log incoming request
+        _logger.LogInformation("Gateway request {Method} {Path} | CorrelationId: {CorrelationId}",
+            context.Request.Method, context.Request.Path, correlationId);
+
+        // 3. Call next middleware (Ocelot routing)
+        await _next(context);
+
+        // 4. Log outgoing response
+        _logger.LogInformation("Gateway response {StatusCode} | CorrelationId: {CorrelationId}",
+            context.Response.StatusCode, correlationId);
+    }
+}
+
+EXPLANATION:
+
+CORRELATION ID:
+- Unique identifier for each request
+- Added to request headers (X-Correlation-Id)
+- Forwarded to downstream services
+- Used for distributed tracing
+
+LOGGING:
+- Request: Method, Path, CorrelationId
+- Response: StatusCode, CorrelationId
+- Helps troubleshoot issues across services
+
+EXAMPLE LOG OUTPUT:
+  Gateway request GET /gateway/catalog/products/123 | CorrelationId: abc-123
+  Gateway response 200 | CorrelationId: abc-123
+
+
+─────────────────────────────────────────────────────────────────────────────
+4.7 ECOM.GATEWAY.CSPROJ (PROJECT FILE)
+─────────────────────────────────────────────────────────────────────────────
+
+📁 Ecom.Gateway.csproj
+LOCATION: Ecom.Gateway/
+PURPOSE: Define project configuration and dependencies
+RESPONSIBILITY:
+  - Specify target framework (.NET 8.0)
+  - List NuGet package dependencies
+  - Configure build settings
+
+CONTENT:
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Ocelot" Version="23.0.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.0" />
+  </ItemGroup>
+</Project>
+
+EXPLANATION:
+
+PROPERTY GROUP:
+- TargetFramework: net8.0 (.NET 8.0)
+- Nullable: enable (nullable reference types)
+- ImplicitUsings: enable (auto-import common namespaces)
+
+PACKAGE REFERENCES:
+- Ocelot 23.0.0: API Gateway library
+- Microsoft.AspNetCore.Authentication.JwtBearer 8.0.0: JWT authentication
+
+DEPENDENCIES (TRANSITIVE):
+- FluentValidation (Ocelot dependency)
+- Newtonsoft.Json (JSON serialization)
+- Microsoft.IdentityModel.Tokens (JWT validation)
+
+
+─────────────────────────────────────────────────────────────────────────────
+4.8 DOCKERFILE (CONTAINERIZATION)
+─────────────────────────────────────────────────────────────────────────────
+
+📁 Dockerfile
+LOCATION: Ecom.Gateway/
+PURPOSE: Build Docker image for gateway
+RESPONSIBILITY:
+  - Define multi-stage build process
+  - Create optimized production image
+  - Configure runtime environment
+
+CONTENT:
+FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS base
+WORKDIR /app
+EXPOSE 80
+
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+WORKDIR /src
+COPY ["Ecom.Gateway.csproj", "."]
+RUN dotnet restore
+COPY . .
+RUN dotnet build -c Release -o /app/build
+
+FROM build AS publish
+RUN dotnet publish -c Release -o /app/publish
+
+FROM base AS final
+WORKDIR /app
+COPY --from=publish /app/publish .
+ENTRYPOINT ["dotnet", "Ecom.Gateway.dll"]
+
+EXPLANATION:
+
+STAGE 1: BASE (RUNTIME)
+- FROM mcr.microsoft.com/dotnet/aspnet:8.0
+- ASP.NET Core runtime (smaller image)
+- EXPOSE 80 (HTTP port)
+
+STAGE 2: BUILD
+- FROM mcr.microsoft.com/dotnet/sdk:8.0
+- Full SDK for building
+- COPY project file → dotnet restore (restore NuGet packages)
+- COPY source code → dotnet build (compile)
+
+STAGE 3: PUBLISH
+- FROM build (reuse build stage)
+- dotnet publish (create deployment artifacts)
+
+STAGE 4: FINAL
+- FROM base (runtime only)
+- COPY published files from publish stage
+- ENTRYPOINT: Run Ecom.Gateway.dll
+
+BENEFITS:
+- Multi-stage build reduces final image size
+- Only runtime dependencies in final image
+- Optimized for production
+
+
+─────────────────────────────────────────────────────────────────────────────
+4.9 PROPERTIES/LAUNCHSETTINGS.JSON
+─────────────────────────────────────────────────────────────────────────────
+
+📁 launchSettings.json
+LOCATION: Ecom.Gateway/Properties/
+PURPOSE: Configure development launch settings
+RESPONSIBILITY:
+  - Define launch profiles for development
+  - Set environment variables
+  - Configure application URLs
+
+CONTENT:
+{
+  "profiles": {
+    "Ecom.Gateway": {
+      "commandName": "Project",
+      "launchBrowser": true,
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "applicationUrl": "https://localhost:58667;http://localhost:58670"
+    }
+  }
+}
+
+EXPLANATION:
+- commandName: Project (run as .NET project)
+- launchBrowser: true (open browser on start)
+- ASPNETCORE_ENVIRONMENT: Development (loads appsettings.Development.json)
+- applicationUrl: HTTPS (58667) and HTTP (58670) ports
+
+
+
+─────────────────────────────────────────────────────────────────────────────
+4.10 BIN/DEBUG/NET8.0/ (BUILD OUTPUT)
+─────────────────────────────────────────────────────────────────────────────
+
+📁 bin/Debug/net8.0/
+LOCATION: Ecom.Gateway/bin/Debug/net8.0/
+PURPOSE: Contains compiled assemblies and runtime dependencies
+RESPONSIBILITY:
+  - Store compiled gateway code
+  - Include all runtime dependencies
+  - Ready to execute
+
+KEY FILES:
+
+Ecom.Gateway.dll
+  - Compiled gateway assembly (IL code)
+  - Contains all gateway logic
+
+Ecom.Gateway.exe
+  - Executable entry point (Windows)
+  - Launches the gateway application
+
+Ocelot.dll
+  - Ocelot library assembly
+  - Core routing and gateway functionality
+
+FluentValidation.dll
+  - Validation library (Ocelot dependency)
+  - Used for configuration validation
+
+Microsoft.AspNetCore.Authentication.JwtBearer.dll
+  - JWT Bearer authentication middleware
+  - Validates JWT tokens
+
+Microsoft.IdentityModel.Tokens.dll
+  - Token validation logic
+  - Cryptographic operations
+
+System.IdentityModel.Tokens.Jwt.dll
+  - JWT token parsing and validation
+  - Token creation and verification
+
+Newtonsoft.Json.dll
+  - JSON serialization/deserialization
+  - Used by Ocelot for configuration
+
+WHY THESE FILES EXIST:
+- .NET applications are compiled to IL (Intermediate Language)
+- Runtime dependencies are copied to output directory
+- All required DLLs must be present to run the application
+- dotnet build generates these files
+
+
+─────────────────────────────────────────────────────────────────────────────
+4.11 OBJ/ (INTERMEDIATE BUILD FILES)
+─────────────────────────────────────────────────────────────────────────────
+
+📁 obj/
+LOCATION: Ecom.Gateway/obj/
+PURPOSE: Store intermediate build artifacts
+RESPONSIBILITY:
+  - Cache build information
+  - Store NuGet package metadata
+  - Track project dependencies
+
+KEY FILES:
+
+obj/Debug/net8.0/Ecom.Gateway.assets.cache
+  - NuGet package restore cache
+  - Speeds up subsequent builds
+
+obj/Debug/net8.0/Ecom.Gateway.csproj.FileListAbsolute.txt
+  - List of all files involved in build
+  - Used for incremental builds
+
+obj/Debug/net8.0/Ecom.Gateway.GlobalUsings.g.cs
+  - Auto-generated global using statements
+  - Enabled by ImplicitUsings in .csproj
+
+obj/Debug/net8.0/ApiEndpoints.json
+  - Discovered API endpoints
+  - Used for tooling and documentation
+
+obj/Ecom.Gateway.csproj.nuget.dgspec.json
+  - NuGet dependency graph specification
+  - Describes all package dependencies
+
+obj/project.assets.json
+  - Resolved project dependencies
+  - Package versions and transitive dependencies
+
+obj/project.nuget.cache
+  - NuGet restore cache
+  - Avoids unnecessary package downloads
+
+WHY THESE FILES EXIST:
+- Improve build performance (caching)
+- Track dependencies for incremental builds
+- Store metadata for tooling
+- Should NOT be committed to source control
+
+
+================================================================================
+5. OCELOT CONFIGURATION DEEP DIVE
+================================================================================
+
+─────────────────────────────────────────────────────────────────────────────
+5.1 OCELOT ROUTING CONCEPTS
+─────────────────────────────────────────────────────────────────────────────
+
+UPSTREAM vs DOWNSTREAM:
+- Upstream: Client-facing (gateway receives requests)
+- Downstream: Service-facing (gateway forwards requests)
+
+EXAMPLE:
+  Client → [Upstream: /gateway/catalog/products] → Gateway
+  Gateway → [Downstream: /api/products] → Catalog Service
+
+PATH TEMPLATES:
+- {everything}: Wildcard captures all remaining path segments
+- {id}: Named parameter (can be used in downstream path)
+- Static paths: Exact match required
+
+EXAMPLE PATH TEMPLATES:
+  /gateway/catalog/{everything}  → Matches /gateway/catalog/products/123/details
+  /gateway/catalog/products/{id} → Matches /gateway/catalog/products/123 only
+  /gateway/catalog/products      → Matches /gateway/catalog/products exactly
+
+
+─────────────────────────────────────────────────────────────────────────────
+5.2 AUTHENTICATION OPTIONS
+─────────────────────────────────────────────────────────────────────────────
+
+AUTHENTICATION PROVIDER KEY:
+- References authentication scheme configured in Program.cs
+- "Bearer" matches AddJwtBearer("Bearer", ...)
+- Gateway validates JWT before forwarding request
+
+AUTHENTICATION FLOW:
+1. Client sends request with Authorization: Bearer <JWT>
+2. Gateway extracts JWT from header
+3. Gateway validates JWT using configured secret
+4. If valid: Forward request to downstream service
+5. If invalid: Return 401 Unauthorized
+
+NO AUTHENTICATION:
+- Routes without AuthenticationOptions are public
+- Example: Auth service (login, signup)
+- No JWT validation performed
+
+
+─────────────────────────────────────────────────────────────────────────────
+5.3 ADVANCED OCELOT FEATURES (NOT USED IN THIS PROJECT)
+─────────────────────────────────────────────────────────────────────────────
+
+RATE LIMITING:
+  "RateLimitOptions": {
+    "ClientWhitelist": [],
+    "EnableRateLimiting": true,
+    "Period": "1s",
+    "PeriodTimespan": 1,
+    "Limit": 10
+  }
+  - Limit requests per client per time period
+
+LOAD BALANCING:
+  "LoadBalancerOptions": {
+    "Type": "RoundRobin"
+  }
+  - Distribute requests across multiple service instances
+
+CACHING:
+  "FileCacheOptions": {
+    "TtlSeconds": 30
+  }
+  - Cache responses for specified duration
+
+REQUEST AGGREGATION:
+  "Aggregates": [
+    {
+      "RouteKeys": ["route1", "route2"],
+      "UpstreamPathTemplate": "/aggregate"
+    }
+  ]
+  - Combine multiple service responses
+
+SERVICE DISCOVERY:
+  "ServiceName": "catalog-service",
+  "UseServiceDiscovery": true
+  - Integrate with Consul, Eureka, etc.
+
+
+================================================================================
+6. ROUTING & REQUEST FLOW
+================================================================================
+
+─────────────────────────────────────────────────────────────────────────────
+6.1 REQUEST FLOW EXAMPLE: GET PRODUCT
+─────────────────────────────────────────────────────────────────────────────
+
+STEP-BY-STEP:
+
+1. CLIENT REQUEST:
+   GET https://localhost:58667/gateway/catalog/products/123
+   Headers:
+     Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+
+2. GATEWAY RECEIVES REQUEST:
+   - Request enters middleware pipeline
+   - GatewayLoggingMiddleware logs request
+   - Generates correlation ID: abc-123
+   - Adds X-Correlation-Id header
+
+3. AUTHENTICATION MIDDLEWARE:
+   - Extracts JWT from Authorization header
+   - Validates JWT signature using secret
+   - Validates issuer, audience, expiration
+   - If valid: Adds user claims to HttpContext
+   - If invalid: Returns 401 Unauthorized
+
+4. OCELOT ROUTING:
+   - Matches request path: /gateway/catalog/products/123
+   - Finds matching route: /gateway/catalog/{everything}
+   - Extracts {everything} = products/123
+   - Builds downstream path: /api/products/123
+   - Resolves downstream host: http://catalog:80
+
+5. FORWARD REQUEST:
+   - Gateway sends: GET http://catalog:80/api/products/123
+   - Forwards headers (including X-Correlation-Id)
+   - Forwards JWT (optional, depends on configuration)
+
+6. DOWNSTREAM SERVICE PROCESSES:
+   - Catalog service receives request
+   - Processes request
+   - Returns response: 200 OK with product data
+
+7. GATEWAY RECEIVES RESPONSE:
+   - Receives response from catalog service
+   - GatewayLoggingMiddleware logs response
+   - Forwards response to client
+
+8. CLIENT RECEIVES RESPONSE:
+   - 200 OK
+   - Body: { "id": 123, "name": "Product Name", ... }
+
+
+
+─────────────────────────────────────────────────────────────────────────────
+6.2 REQUEST FLOW EXAMPLE: LOGIN (NO AUTHENTICATION)
+─────────────────────────────────────────────────────────────────────────────
+
+STEP-BY-STEP:
+
+1. CLIENT REQUEST:
+   POST https://localhost:58667/gateway/auth/login
+   Body: { "email": "user@example.com", "password": "password123" }
+
+2. GATEWAY RECEIVES REQUEST:
+   - GatewayLoggingMiddleware logs request
+   - Generates correlation ID: xyz-456
+
+3. AUTHENTICATION MIDDLEWARE:
+   - No AuthenticationOptions on this route
+   - Skips JWT validation
+   - Proceeds to Ocelot routing
+
+4. OCELOT ROUTING:
+   - Matches request path: /gateway/auth/login
+   - Finds matching route: /gateway/auth/{everything}
+   - Extracts {everything} = login
+   - Builds downstream path: /api/auth/login
+   - Resolves downstream host: http://auth:80
+
+5. FORWARD REQUEST:
+   - Gateway sends: POST http://auth:80/api/auth/login
+   - Forwards request body
+
+6. AUTH SERVICE PROCESSES:
+   - Validates credentials
+   - Generates JWT token
+   - Returns response: 200 OK with JWT
+
+7. GATEWAY RECEIVES RESPONSE:
+   - Receives response from auth service
+   - GatewayLoggingMiddleware logs response
+   - Forwards response to client
+
+8. CLIENT RECEIVES RESPONSE:
+   - 200 OK
+   - Body: { "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...", ... }
+
+
+─────────────────────────────────────────────────────────────────────────────
+6.3 ROUTING TABLE SUMMARY
+─────────────────────────────────────────────────────────────────────────────
+
+CLIENT PATH                    → DOWNSTREAM SERVICE
+─────────────────────────────────────────────────────────────────────────────
+/gateway/auth/*                → http://auth:80/api/auth/*        (Public)
+/gateway/catalog/*             → http://catalog:80/api/*          (Protected)
+/gateway/workflow/*            → http://workflow:80/api/*         (Protected)
+/gateway/admin/*               → http://reporting:80/api/*        (Protected)
+
+AUTHENTICATION:
+- /gateway/auth/*: No authentication required
+- All others: JWT Bearer token required
+
+
+================================================================================
+7. AUTHENTICATION & AUTHORIZATION
+================================================================================
+
+─────────────────────────────────────────────────────────────────────────────
+7.1 JWT AUTHENTICATION FLOW
+─────────────────────────────────────────────────────────────────────────────
+
+1. USER LOGS IN:
+   - Client: POST /gateway/auth/login
+   - Auth service validates credentials
+   - Auth service generates JWT token
+   - Client receives JWT
+
+2. USER MAKES AUTHENTICATED REQUEST:
+   - Client: GET /gateway/catalog/products
+   - Headers: Authorization: Bearer <JWT>
+
+3. GATEWAY VALIDATES JWT:
+   - Extracts JWT from Authorization header
+   - Validates signature using secret
+   - Validates issuer: "ecom-auth-service"
+   - Validates audience: "ecom-clients"
+   - Validates expiration (lifetime)
+   - If valid: Extracts user claims (userId, roles, etc.)
+   - If invalid: Returns 401 Unauthorized
+
+4. GATEWAY FORWARDS REQUEST:
+   - Adds user claims to request context
+   - Forwards request to downstream service
+   - Downstream service trusts gateway (no re-validation)
+
+
+─────────────────────────────────────────────────────────────────────────────
+7.2 JWT CONFIGURATION REQUIREMENTS
+─────────────────────────────────────────────────────────────────────────────
+
+CRITICAL: Gateway and Auth service MUST use same JWT settings:
+
+✓ SECRET:
+  - Gateway: appsettings.json → Jwt:Secret
+  - Auth: appsettings.json → Jwt:Secret
+  - MUST BE IDENTICAL
+
+✓ ISSUER:
+  - Gateway: appsettings.json → Jwt:Issuer
+  - Auth: appsettings.json → Jwt:Issuer
+  - MUST BE IDENTICAL
+
+✓ AUDIENCE:
+  - Gateway: appsettings.json → Jwt:Audience
+  - Auth: appsettings.json → Jwt:Audience
+  - MUST BE IDENTICAL
+
+MISMATCH CONSEQUENCES:
+- Gateway will reject all JWTs
+- All authenticated requests will fail with 401
+
+
+─────────────────────────────────────────────────────────────────────────────
+7.3 AUTHORIZATION (ROLE-BASED)
+─────────────────────────────────────────────────────────────────────────────
+
+GATEWAY RESPONSIBILITY:
+- Gateway validates JWT (authentication)
+- Gateway does NOT enforce role-based authorization
+- Downstream services enforce authorization
+
+EXAMPLE:
+  Client: POST /gateway/workflow/products/123/approve
+  Headers: Authorization: Bearer <JWT>
+  
+  Gateway:
+  - Validates JWT (authentication)
+  - Forwards request to workflow service
+  
+  Workflow Service:
+  - Extracts user claims from JWT
+  - Checks if user has "Admin" role
+  - If yes: Approve product
+  - If no: Return 403 Forbidden
+
+WHY THIS DESIGN:
+- Gateway handles authentication (centralized)
+- Services handle authorization (business logic)
+- Services know their own authorization rules
+
+
+================================================================================
+8. MIDDLEWARE PIPELINE
+================================================================================
+
+─────────────────────────────────────────────────────────────────────────────
+8.1 MIDDLEWARE EXECUTION ORDER
+─────────────────────────────────────────────────────────────────────────────
+
+REQUEST PIPELINE (TOP TO BOTTOM):
+
+1. GatewayLoggingMiddleware
+   - Generates correlation ID
+   - Logs incoming request
+   - Adds X-Correlation-Id header
+
+2. UseAuthentication
+   - Validates JWT token
+   - Extracts user claims
+   - Returns 401 if invalid
+
+3. UseOcelot
+   - Matches route
+   - Forwards request to downstream service
+   - Returns response to client
+
+RESPONSE PIPELINE (BOTTOM TO TOP):
+
+3. UseOcelot
+   - Receives response from downstream service
+   - Forwards response to client
+
+2. UseAuthentication
+   - No action on response
+
+1. GatewayLoggingMiddleware
+   - Logs outgoing response
+   - Returns response to client
+
+
+─────────────────────────────────────────────────────────────────────────────
+8.2 MIDDLEWARE ORDER IMPORTANCE
+─────────────────────────────────────────────────────────────────────────────
+
+WHY LOGGING FIRST:
+- Captures all requests (even failed auth)
+- Correlation ID available for all logs
+- Helps troubleshoot authentication issues
+
+WHY AUTHENTICATION BEFORE OCELOT:
+- Security: Validate JWT before routing
+- Prevent unauthorized access to downstream services
+- Fail fast on invalid tokens
+
+INCORRECT ORDER (SECURITY RISK):
+  app.UseOcelot();           // Routes first
+  app.UseAuthentication();   // Auth second (TOO LATE!)
+  
+  PROBLEM: Requests forwarded before authentication
+
+
+─────────────────────────────────────────────────────────────────────────────
+8.3 ADDING CUSTOM MIDDLEWARE
+─────────────────────────────────────────────────────────────────────────────
+
+EXAMPLE: Rate Limiting Middleware
+
+1. CREATE MIDDLEWARE:
+   public class RateLimitingMiddleware
+   {
+       private readonly RequestDelegate _next;
+       
+       public RateLimitingMiddleware(RequestDelegate next)
+       {
+           _next = next;
+       }
+       
+       public async Task InvokeAsync(HttpContext context)
+       {
+           // Check rate limit
+           if (IsRateLimitExceeded(context))
+           {
+               context.Response.StatusCode = 429; // Too Many Requests
+               return;
+           }
+           
+           await _next(context);
+       }
+   }
+
+2. REGISTER IN PROGRAM.CS:
+   app.UseMiddleware<GatewayLoggingMiddleware>();
+   app.UseMiddleware<RateLimitingMiddleware>();  // Add here
+   app.UseAuthentication();
+   await app.UseOcelot();
+
+
+================================================================================
+9. ENVIRONMENT-BASED CONFIGURATION
+================================================================================
+
+─────────────────────────────────────────────────────────────────────────────
+9.1 CONFIGURATION LOADING ORDER
+─────────────────────────────────────────────────────────────────────────────
+
+1. appsettings.json (base configuration)
+2. appsettings.{Environment}.json (environment-specific)
+3. ocelot.json (base routing)
+4. ocelot.{Environment}.json (environment-specific routing)
+5. Environment variables (highest priority)
+
+EXAMPLE (Development):
+  1. appsettings.json
+  2. appsettings.Development.json (overrides #1)
+  3. ocelot.json
+  4. ocelot.Development.json (overrides #3, if exists)
+  5. Environment variables (override all)
+
+
+─────────────────────────────────────────────────────────────────────────────
+9.2 ENVIRONMENT DETECTION
+─────────────────────────────────────────────────────────────────────────────
+
+ASPNETCORE_ENVIRONMENT variable determines environment:
+- Development: Local development
+- Staging: Pre-production testing
+- Production: Live production
+
+SET ENVIRONMENT:
+  Windows: set ASPNETCORE_ENVIRONMENT=Development
+  Linux/Mac: export ASPNETCORE_ENVIRONMENT=Development
+  Docker: environment: ASPNETCORE_ENVIRONMENT=Development
+
+
+─────────────────────────────────────────────────────────────────────────────
+9.3 ENVIRONMENT-SPECIFIC CONFIGURATION EXAMPLES
+─────────────────────────────────────────────────────────────────────────────
+
+DEVELOPMENT:
+- Verbose logging (Debug level)
+- Local service URLs (localhost)
+- Relaxed security (RequireHttpsMetadata = false)
+
+STAGING:
+- Moderate logging (Information level)
+- Staging service URLs (staging.example.com)
+- Production-like security
+
+PRODUCTION:
+- Minimal logging (Warning level)
+- Production service URLs (api.example.com)
+- Strict security (HTTPS required)
+
+
+
+================================================================================
+10. BUILD OUTPUT & INTERMEDIATE FILES
+================================================================================
+
+─────────────────────────────────────────────────────────────────────────────
+10.1 BUILD PROCESS
+─────────────────────────────────────────────────────────────────────────────
+
+DOTNET BUILD STEPS:
+
+1. RESTORE:
+   dotnet restore
+   - Downloads NuGet packages
+   - Resolves dependencies
+   - Creates obj/project.assets.json
+
+2. COMPILE:
+   dotnet build
+   - Compiles C# code to IL (Intermediate Language)
+   - Generates Ecom.Gateway.dll
+   - Copies dependencies to bin/Debug/net8.0/
+
+3. PUBLISH:
+   dotnet publish
+   - Creates deployment-ready artifacts
+   - Includes runtime dependencies
+   - Optimizes for production
+
+
+─────────────────────────────────────────────────────────────────────────────
+10.2 WHY BIN AND OBJ FOLDERS EXIST
+─────────────────────────────────────────────────────────────────────────────
+
+BIN FOLDER:
+- Contains final build output
+- Ready to execute
+- Includes all runtime dependencies
+- Can be deployed as-is
+
+OBJ FOLDER:
+- Contains intermediate build artifacts
+- Speeds up incremental builds
+- Caches NuGet package information
+- Should NOT be deployed
+
+GITIGNORE:
+- Both bin/ and obj/ should be in .gitignore
+- Generated files, not source code
+- Can be recreated from source
+
+
+─────────────────────────────────────────────────────────────────────────────
+10.3 DEPENDENCY RESOLUTION
+─────────────────────────────────────────────────────────────────────────────
+
+DIRECT DEPENDENCIES (from .csproj):
+- Ocelot 23.0.0
+- Microsoft.AspNetCore.Authentication.JwtBearer 8.0.0
+
+TRANSITIVE DEPENDENCIES (pulled by direct dependencies):
+- FluentValidation (Ocelot dependency)
+- Newtonsoft.Json (Ocelot dependency)
+- Microsoft.IdentityModel.Tokens (JWT dependency)
+- System.IdentityModel.Tokens.Jwt (JWT dependency)
+
+ALL DEPENDENCIES COPIED TO BIN:
+- Ensures application has everything it needs
+- No external dependencies at runtime
+
+
+================================================================================
+11. DOCKER CONFIGURATION
+================================================================================
+
+─────────────────────────────────────────────────────────────────────────────
+11.1 MULTI-STAGE BUILD EXPLAINED
+─────────────────────────────────────────────────────────────────────────────
+
+STAGE 1: BASE (RUNTIME IMAGE)
+FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS base
+WORKDIR /app
+EXPOSE 80
+
+PURPOSE:
+- Defines runtime environment
+- ASP.NET Core runtime only (no SDK)
+- Smaller image size
+- Exposes port 80
+
+STAGE 2: BUILD (COMPILE)
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+WORKDIR /src
+COPY ["Ecom.Gateway.csproj", "."]
+RUN dotnet restore
+COPY . .
+RUN dotnet build -c Release -o /app/build
+
+PURPOSE:
+- Full .NET SDK for building
+- Restore NuGet packages
+- Compile source code
+- Generate build artifacts
+
+STAGE 3: PUBLISH (OPTIMIZE)
+FROM build AS publish
+RUN dotnet publish -c Release -o /app/publish
+
+PURPOSE:
+- Create deployment-ready artifacts
+- Optimize for production
+- Trim unused code
+
+STAGE 4: FINAL (PRODUCTION IMAGE)
+FROM base AS final
+WORKDIR /app
+COPY --from=publish /app/publish .
+ENTRYPOINT ["dotnet", "Ecom.Gateway.dll"]
+
+PURPOSE:
+- Start from runtime image (small)
+- Copy only published artifacts
+- No SDK, no source code
+- Optimized for production
+
+BENEFITS:
+- Final image only contains runtime + app
+- No build tools in production image
+- Smaller image size (faster deployment)
+- More secure (less attack surface)
+
+
+─────────────────────────────────────────────────────────────────────────────
+11.2 DOCKER COMPOSE INTEGRATION
+─────────────────────────────────────────────────────────────────────────────
+
+EXAMPLE DOCKER COMPOSE:
+
+version: '3.8'
+services:
+  gateway:
+    build:
+      context: ./gateway/Ecom.Gateway
+      dockerfile: Dockerfile
+    ports:
+      - "5000:80"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - Jwt__Secret=dev-super-secret-key-change-in-prod-32chars!!
+    depends_on:
+      - auth
+      - catalog
+      - workflow
+      - reporting
+    networks:
+      - ecom-network
+
+  auth:
+    build: ./services/auth/Ecom.Auth
+    networks:
+      - ecom-network
+
+  catalog:
+    build: ./services/catalog/Ecom.Catalog
+    networks:
+      - ecom-network
+
+  workflow:
+    build: ./services/workflow/Ecom.Workflow
+    networks:
+      - ecom-network
+
+  reporting:
+    build: ./services/reporting/Ecom.Reporting
+    networks:
+      - ecom-network
+
+networks:
+  ecom-network:
+    driver: bridge
+
+EXPLANATION:
+- Gateway exposed on port 5000
+- All services on same network (ecom-network)
+- Services communicate using container names (auth, catalog, etc.)
+- Gateway depends on all downstream services
+
+
+─────────────────────────────────────────────────────────────────────────────
+11.3 CONTAINER NETWORKING
+─────────────────────────────────────────────────────────────────────────────
+
+DOCKER NETWORK:
+- All containers on same network
+- Containers can communicate using container names
+- DNS resolution provided by Docker
+
+EXAMPLE:
+  Gateway: http://catalog:80/api/products
+  - "catalog" resolves to catalog container IP
+  - Port 80 is internal container port
+  - No need for localhost or external IPs
+
+EXTERNAL ACCESS:
+  Client: http://localhost:5000/gateway/catalog/products
+  - Port 5000 mapped to gateway container port 80
+  - Gateway forwards to http://catalog:80/api/products
+
+
+================================================================================
+12. REQUEST FLOW DIAGRAM
+================================================================================
+
+COMPLETE REQUEST FLOW (AUTHENTICATED REQUEST):
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                          CLIENT (Web/Mobile App)                        │
+└────────────────────────────┬────────────────────────────────────────────┘
+                             │
+                             │ GET /gateway/catalog/products/123
+                             │ Headers: Authorization: Bearer <JWT>
+                             ↓
+┌─────────────────────────────────────────────────────────────────────────┐
+│                          API GATEWAY (Ocelot)                           │
+│  ┌───────────────────────────────────────────────────────────────────┐  │
+│  │ 1. GatewayLoggingMiddleware                                      │  │
+│  │    - Generate correlation ID: abc-123                            │  │
+│  │    - Add X-Correlation-Id header                                 │  │
+│  │    - Log: "Gateway request GET /gateway/catalog/products/123"    │  │
+│  └───────────────────────────────────────────────────────────────────┘  │
+│  ┌───────────────────────────────────────────────────────────────────┐  │
+│  │ 2. Authentication Middleware                                     │  │
+│  │    - Extract JWT from Authorization header                       │  │
+│  │    - Validate signature using secret                             │  │
+│  │    - Validate issuer: "ecom-auth-service"                        │  │
+│  │    - Validate audience: "ecom-clients"                           │  │
+│  │    - Validate expiration                                         │  │
+│  │    - If valid: Extract user claims                               │  │
+│  │    - If invalid: Return 401 Unauthorized                         │  │
+│  └───────────────────────────────────────────────────────────────────┘  │
+│  ┌───────────────────────────────────────────────────────────────────┐  │
+│  │ 3. Ocelot Routing                                                │  │
+│  │    - Match route: /gateway/catalog/{everything}                  │  │
+│  │    - Extract {everything} = products/123                         │  │
+│  │    - Build downstream path: /api/products/123                    │  │
+│  │    - Resolve host: http://catalog:80                             │  │
+│  │    - Forward request with headers                                │  │
+│  └───────────────────────────────────────────────────────────────────┘  │
+└────────────────────────────┬────────────────────────────────────────────┘
+                             │
+                             │ GET http://catalog:80/api/products/123
+                             │ Headers: X-Correlation-Id: abc-123
+                             ↓
+┌─────────────────────────────────────────────────────────────────────────┐
+│                       CATALOG SERVICE (Downstream)                      │
+│  ┌───────────────────────────────────────────────────────────────────┐  │
+│  │ 1. Receive request                                               │  │
+│  │ 2. Process request (query database)                              │  │
+│  │ 3. Return response: 200 OK                                       │  │
+│  │    Body: { "id": 123, "name": "Product Name", ... }             │  │
+│  └───────────────────────────────────────────────────────────────────┘  │
+└────────────────────────────┬────────────────────────────────────────────┘
+                             │
+                             │ 200 OK
+                             │ Body: { "id": 123, "name": "Product Name", ... }
+                             ↓
+┌─────────────────────────────────────────────────────────────────────────┐
+│                          API GATEWAY (Ocelot)                           │
+│  ┌───────────────────────────────────────────────────────────────────┐  │
+│  │ 4. Receive response from downstream                              │  │
+│  │ 5. GatewayLoggingMiddleware logs response                        │  │
+│  │    - Log: "Gateway response 200 | CorrelationId: abc-123"        │  │
+│  │ 6. Forward response to client                                    │  │
+│  └───────────────────────────────────────────────────────────────────┘  │
+└────────────────────────────┬────────────────────────────────────────────┘
+                             │
+                             │ 200 OK
+                             │ Body: { "id": 123, "name": "Product Name", ... }
+                             ↓
+┌─────────────────────────────────────────────────────────────────────────┐
+│                          CLIENT (Web/Mobile App)                        │
+│  ┌───────────────────────────────────────────────────────────────────┐  │
+│  │ Display product details                                          │  │
+│  └───────────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────────┘
+
+
+
+================================================================================
+13. BENEFITS & TRADE-OFFS
+================================================================================
+
+─────────────────────────────────────────────────────────────────────────────
+13.1 BENEFITS OF API GATEWAY
+─────────────────────────────────────────────────────────────────────────────
+
+✓ SINGLE ENTRY POINT:
+  - Clients only need to know one URL
+  - Simplifies client configuration
+  - Easy to change backend service locations
+
+✓ CENTRALIZED AUTHENTICATION:
+  - JWT validation happens once at gateway
+  - Downstream services trust gateway
+  - Consistent security policy
+
+✓ SIMPLIFIED CLIENT CODE:
+  - No need to manage multiple service URLs
+  - No need to handle authentication per service
+  - Consistent error handling
+
+✓ CROSS-CUTTING CONCERNS:
+  - Logging and monitoring in one place
+  - Rate limiting and throttling
+  - Request/response transformation
+  - Caching
+
+✓ SERVICE ISOLATION:
+  - Backend services not exposed directly
+  - Gateway handles service discovery
+  - Easy to add/remove services
+
+✓ PROTOCOL TRANSLATION:
+  - Gateway can translate between protocols
+  - Example: HTTP to gRPC
+  - Example: REST to GraphQL
+
+✓ REQUEST AGGREGATION:
+  - Combine multiple service calls
+  - Reduce client-to-service round trips
+  - Improve performance
+
+✓ LOAD BALANCING:
+  - Distribute requests across service instances
+  - Improve availability and scalability
+
+
+─────────────────────────────────────────────────────────────────────────────
+13.2 TRADE-OFFS & CONSIDERATIONS
+─────────────────────────────────────────────────────────────────────────────
+
+✗ SINGLE POINT OF FAILURE:
+  - If gateway goes down, all services unavailable
+  - Mitigation: Deploy multiple gateway instances
+  - Mitigation: Use load balancer in front of gateways
+
+✗ INCREASED LATENCY:
+  - Extra network hop (client → gateway → service)
+  - Adds ~10-50ms per request
+  - Mitigation: Deploy gateway close to services
+  - Mitigation: Use caching
+
+✗ COMPLEXITY:
+  - Additional component to manage
+  - Configuration complexity (routing rules)
+  - Debugging can be harder (distributed tracing helps)
+
+✗ BOTTLENECK:
+  - All traffic goes through gateway
+  - Can become performance bottleneck
+  - Mitigation: Scale gateway horizontally
+  - Mitigation: Optimize gateway performance
+
+✗ CONFIGURATION MANAGEMENT:
+  - Routing rules must be kept in sync
+  - Changes require gateway restart (unless dynamic config)
+  - Mitigation: Use configuration management tools
+  - Mitigation: Automate deployment
+
+✗ TESTING:
+  - Integration tests more complex
+  - Need to test gateway + services
+  - Mitigation: Use contract testing
+  - Mitigation: Mock downstream services
+
+
+─────────────────────────────────────────────────────────────────────────────
+13.3 WHEN TO USE API GATEWAY
+─────────────────────────────────────────────────────────────────────────────
+
+USE API GATEWAY WHEN:
+✓ Multiple microservices
+✓ Need centralized authentication
+✓ Need cross-cutting concerns (logging, rate limiting)
+✓ Multiple client types (web, mobile, IoT)
+✓ Need to aggregate service calls
+✓ Need protocol translation
+
+DON'T USE API GATEWAY WHEN:
+✗ Single monolithic application
+✗ Very low latency requirements (every millisecond counts)
+✗ Simple architecture (2-3 services)
+✗ Services already have built-in gateway features
+
+
+─────────────────────────────────────────────────────────────────────────────
+13.4 ALTERNATIVES TO OCELOT
+─────────────────────────────────────────────────────────────────────────────
+
+.NET ALTERNATIVES:
+- YARP (Yet Another Reverse Proxy): Microsoft's reverse proxy
+- Envoy: High-performance proxy (C++)
+- Traefik: Modern HTTP reverse proxy
+- Kong: API Gateway with plugins
+- AWS API Gateway: Managed service (AWS)
+- Azure API Management: Managed service (Azure)
+
+WHY OCELOT:
+✓ .NET native (easy integration)
+✓ Simple configuration (JSON)
+✓ Good documentation
+✓ Active community
+✓ Lightweight
+✓ Open source
+
+
+================================================================================
+14. DEPLOYMENT GUIDE
+================================================================================
+
+─────────────────────────────────────────────────────────────────────────────
+14.1 LOCAL DEVELOPMENT
+─────────────────────────────────────────────────────────────────────────────
+
+PREREQUISITES:
+- .NET 8.0 SDK installed
+- Docker Desktop (for containerized services)
+
+STEPS:
+
+1. CLONE REPOSITORY:
+   git clone https://github.com/your-org/ecom-microservices.git
+   cd ecom-microservices
+
+2. START DOWNSTREAM SERVICES:
+   docker-compose up -d auth catalog workflow reporting
+
+3. RUN GATEWAY:
+   cd gateway/Ecom.Gateway
+   dotnet run
+
+4. TEST GATEWAY:
+   curl http://localhost:58670/gateway/auth/health
+   
+   Expected: 200 OK
+
+
+─────────────────────────────────────────────────────────────────────────────
+14.2 DOCKER DEPLOYMENT
+─────────────────────────────────────────────────────────────────────────────
+
+STEPS:
+
+1. BUILD DOCKER IMAGE:
+   cd gateway/Ecom.Gateway
+   docker build -t ecom-gateway:latest .
+
+2. RUN CONTAINER:
+   docker run -d \
+     --name gateway \
+     -p 5000:80 \
+     -e ASPNETCORE_ENVIRONMENT=Production \
+     -e Jwt__Secret=your-production-secret \
+     --network ecom-network \
+     ecom-gateway:latest
+
+3. VERIFY:
+   curl http://localhost:5000/gateway/auth/health
+
+
+─────────────────────────────────────────────────────────────────────────────
+14.3 DOCKER COMPOSE DEPLOYMENT
+─────────────────────────────────────────────────────────────────────────────
+
+STEPS:
+
+1. CREATE DOCKER-COMPOSE.YML:
+   (See section 11.2 for example)
+
+2. START ALL SERVICES:
+   docker-compose up -d
+
+3. VERIFY:
+   docker-compose ps
+   curl http://localhost:5000/gateway/auth/health
+
+4. VIEW LOGS:
+   docker-compose logs gateway
+
+5. STOP ALL SERVICES:
+   docker-compose down
+
+
+─────────────────────────────────────────────────────────────────────────────
+14.4 KUBERNETES DEPLOYMENT
+─────────────────────────────────────────────────────────────────────────────
+
+EXAMPLE DEPLOYMENT MANIFEST:
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: gateway
+  template:
+    metadata:
+      labels:
+        app: gateway
+    spec:
+      containers:
+      - name: gateway
+        image: ecom-gateway:latest
+        ports:
+        - containerPort: 80
+        env:
+        - name: ASPNETCORE_ENVIRONMENT
+          value: "Production"
+        - name: Jwt__Secret
+          valueFrom:
+            secretKeyRef:
+              name: jwt-secret
+              key: secret
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 80
+    targetPort: 80
+  selector:
+    app: gateway
+
+STEPS:
+
+1. APPLY MANIFESTS:
+   kubectl apply -f gateway-deployment.yaml
+
+2. VERIFY:
+   kubectl get pods
+   kubectl get services
+
+3. ACCESS GATEWAY:
+   kubectl get service gateway
+   # Use EXTERNAL-IP to access gateway
+
+
+─────────────────────────────────────────────────────────────────────────────
+14.5 PRODUCTION CONSIDERATIONS
+─────────────────────────────────────────────────────────────────────────────
+
+SECURITY:
+✓ Use HTTPS (TLS/SSL certificates)
+✓ Store JWT secret in environment variables or secrets manager
+✓ Enable CORS with specific origins
+✓ Implement rate limiting
+✓ Use API keys for additional security
+
+MONITORING:
+✓ Enable Application Insights or similar
+✓ Track request/response times
+✓ Monitor error rates
+✓ Set up alerts for failures
+
+LOGGING:
+✓ Use structured logging (Serilog)
+✓ Send logs to centralized logging (ELK, Splunk)
+✓ Include correlation IDs
+✓ Log errors and warnings
+
+PERFORMANCE:
+✓ Enable response caching
+✓ Use connection pooling
+✓ Optimize routing rules
+✓ Scale horizontally (multiple instances)
+
+HIGH AVAILABILITY:
+✓ Deploy multiple gateway instances
+✓ Use load balancer in front of gateways
+✓ Implement health checks
+✓ Use circuit breakers for downstream services
+
+CONFIGURATION:
+✓ Use environment variables for secrets
+✓ Use configuration management tools
+✓ Automate deployment
+✓ Version control configuration files
+
+
+================================================================================
+15. SUMMARY
+================================================================================
+
+The Ecom.Gateway is a production-ready API Gateway built using Ocelot that
+provides a single entry point for all client requests to the microservices
+architecture.
+
+KEY FEATURES:
+✓ Centralized routing to 4 downstream services
+✓ JWT Bearer authentication
+✓ Request/response logging with correlation IDs
+✓ Environment-based configuration
+✓ Docker containerization
+✓ Clean and maintainable codebase
+
+ROUTING:
+- /gateway/auth/* → Auth Service (public)
+- /gateway/catalog/* → Catalog Service (protected)
+- /gateway/workflow/* → Workflow Service (protected)
+- /gateway/admin/* → Reporting Service (protected)
+
+TECHNOLOGY STACK:
+- .NET 8.0
+- Ocelot 23.0.0
+- JWT Bearer Authentication
+- Docker
+
+BENEFITS:
+- Simplified client experience
+- Centralized security
+- Cross-cutting concerns in one place
+- Service isolation
+- Easy to scale and maintain
+
+This documentation provides a complete reference for understanding,
+configuring, and deploying the API Gateway.
+
+================================================================================
+                              END OF DOCUMENTATION
+================================================================================

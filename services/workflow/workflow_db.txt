@@ -1,0 +1,211 @@
+**FILE NAME: workflow_db.txt**
+
+---
+
+### 🔥 MASTER PROMPT: Ecom.Workflow Database Walkthrough (Code-First Approach)
+
+---
+
+## 1. 🧠 DOMAIN-DRIVEN DATABASE DESIGN
+
+In our `Ecom.Workflow` microservice, the database is designed to handle **state-driven processes** for critical operations like Price Adjustments and Inventory Updates. Instead of a generic State Machine, we implement a **Task-Based Workflow Pattern**.
+
+### Core Domain Entities:
+
+*   **Workflow / ActionType**: Represented by the `ActionType` in our Approvals. It defines which process is being executed (e.g., "PRICE_UPDATE", "STOCK_ADJUSTMENT").
+*   **Approval (The Workflow Instance)**: This is the heartbeat of the service. It tracks who needs to approve a change, at what step, and the current state of that request.
+*   **Price (Domain Data)**: The actual data being "flowed" through the system. A price isn't just a number; it's a domain entity under governance.
+*   **Inventory (Domain Data)**: Represents the stock level being managed.
+*   **InventoryLog (Audit)**: Captures the history of changes, providing a "Paper Trail" for every stock transition.
+*   **OutboxEvent (Reliability)**: Ensures that once a workflow step completes, other microservices (like Catalog or Order) are notified reliably using the **Transactional Outbox Pattern**.
+
+---
+
+## 2. 🏗️ ENTITY CLASSES (CODE-FIRST)
+
+Using EF Core Code-First, our entities are defined as POCO classes. We use Data Annotations and Fluent API for enterprise-grade mapping.
+
+### Approval Entity (The Workflow Step)
+```csharp
+public class Approval
+{
+    public int Id { get; set; }
+    public int ProductId { get; set; }
+    public string? ActionType { get; set; } // e.g., "PriceChange"
+    public int? ApprovedBy { get; set; }
+    public string? Comments { get; set; }
+    public int? StepNumber { get; set; } // Current stage in the pipeline
+    public bool IsDeleted { get; set; } = false; // Soft Delete support
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? UpdatedAt { get; set; }
+    public byte[]? RowVersion { get; set; } // Optimistic Concurrency
+}
+```
+
+### Price Entity
+```csharp
+public class Price
+{
+    public int Id { get; set; }
+    public int ProductVariantId { get; set; }
+    public decimal MRP { get; set; }
+    public decimal SalePrice { get; set; }
+    public string? EventKey { get; set; } // Link to external events
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? UpdatedAt { get; set; }
+    public byte[]? RowVersion { get; set; }
+}
+```
+
+### Inventory Entity
+```csharp
+public class Inventory
+{
+    public int Id { get; set; }
+    public int ProductVariantId { get; set; }
+    public int Quantity { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? UpdatedAt { get; set; }
+    public byte[]? RowVersion { get; set; }
+}
+```
+
+---
+
+## 3. 🔗 RELATIONSHIPS (VERY IMPORTANT)
+
+Our design focuses on **loose coupling** between the Workflow and the Domain Data:
+
+1.  **Approval -> Product (Logical 1:1)**: An Approval entry relates to a specific Product/Variant change. While we don't have a hard FK to an external service's DB (Microservices rule #1), the `ProductId` is our shared identity.
+2.  **Inventory -> InventoryLog (1:Many)**: One stock level record has many change logs. This allows us to reconstruct how we reached a current quantity.
+3.  **Price -> OutboxEvent (Logical 1:1)**: When a Price is updated, an Outbox record is created to notify the rest of the ecosystem.
+
+**Why these relationships matter?**
+By decoupling `Approval` from `Price`, we can reuse the approval engine for ANY type of change (Inventory, Catalog, etc.) without changing the core schema.
+
+---
+
+## 4. 🧱 DB CONTEXT (INFRASTRUCTURE LAYER)
+
+The `WorkflowDbContext` is the bridge between our C# models and SQL Server.
+
+```csharp
+public class WorkflowDbContext : DbContext
+{
+    public WorkflowDbContext(DbContextOptions<WorkflowDbContext> options) : base(options) { }
+
+    public DbSet<Price> Prices => Set<Price>();
+    public DbSet<Inventory> Inventories => Set<Inventory>();
+    public DbSet<InventoryLog> InventoryLogs => Set<InventoryLog>();
+    public DbSet<Approval> Approvals => Set<Approval>();
+    public DbSet<OutboxEvent> OutboxEvents => Set<OutboxEvent>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        // Automatically find and apply all configurations from this assembly
+        modelBuilder.ApplyConfigurationsFromAssembly(typeof(WorkflowDbContext).Assembly);
+    }
+}
+```
+
+### Fluent API Configuration Example (`PriceConfiguration`)
+```csharp
+public class PriceConfiguration : IEntityTypeConfiguration<Price>
+{
+    public void Configure(EntityTypeBuilder<Price> builder)
+    {
+        builder.HasKey(p => p.Id);
+        builder.Property(p => p.MRP).HasColumnType("decimal(10,2)");
+        builder.Property(p => p.SalePrice).HasColumnType("decimal(10,2)");
+        
+        // Business Rule: Sale Price can never exceed MRP
+        builder.ToTable(t => t.HasCheckConstraint("CHK_Price", "SalePrice <= MRP"));
+        
+        builder.Property(p => p.RowVersion).IsRowVersion(); // Concurrency token
+        builder.HasIndex(p => p.EventKey).IsUnique(); // Unique business key
+    }
+}
+```
+
+---
+
+## 5. ⚙️ MIGRATIONS (CODE-FIRST FLOW)
+
+In Microservices, we never touch the DB manually. We use EF Migrations:
+
+1.  **`Add-Migration InitialCreate`**: EF compares the current Model with the snapshot. It generates a C# class containing `Up()` (creation) and `Down()` (reversal) methods.
+2.  **`Update-Database`**: EF applies the migration. It uses a table called `__EFMigrationsHistory` to keep track of applied changes.
+
+**Internal Logic**: EF Core acts as a translator. It maps C# types (int, string, decimal) to SQL types (int, nvarchar, decimal(18,2)) based on conventions and configuration.
+
+---
+
+## 6. 🗄️ FINAL DATABASE STRUCTURE (TABLE DESIGN)
+
+| Table: Approvals | Type | Detail |
+| :--- | :--- | :--- |
+| Id | INT | PK (Identity) |
+| ProductId | INT | FK-style Identity |
+| ActionType | NVARCHAR | "PRICE", "STOCK" |
+| StepNumber | INT | Current workflow stage |
+| RowVersion | ROWVERSION | Concurrency Check |
+
+| Table: Prices | Type | Detail |
+| :--- | :--- | :--- |
+| Id | INT | PK |
+| MRP | DECIMAL | Max Retail Price |
+| SalePrice | DECIMAL | Current Price |
+| EventKey | NVARCHAR | Unique Event ID |
+
+---
+
+## 7. 🔄 REAL WORKFLOW EXAMPLE (PRICE UPDATE)
+
+👉 **Scenario: A Category Manager wants to discount an iPhone.**
+
+1.  **State - Created**: Manager submits a price update ($999 -> $899). A `Price` record is created.
+2.  **Transition**: An `Approval` record is inserted with `StepNumber = 1` (Awaiting Supervisor).
+3.  **Action**: Supervisor reviews. If rejected, record is flagged. If approved, `StepNumber` moves to 2.
+4.  **Final State**: Once `StepNumber` hits max (e.g., Finance Approved), an `OutboxEvent` is fired.
+5.  **Synchronization**: The "Catalog Service" receives the event and updates the public storefront.
+
+---
+
+## 8. 📊 CLASS DIAGRAM
+
+```text
+[Approval] 
+    |-- ProductId (Logical Key)
+    |-- StepNumber (State Control)
+    |
+[Price] <-----------------> [OutboxEvent]
+    |-- MRP                   |-- EventType
+    |-- SalePrice             |-- Payload (JSON)
+    |
+[Inventory] <-------------> [InventoryLog]
+    |-- Quantity              |-- ChangeQty
+    |-- VariantId             |-- Timestamp
+```
+
+---
+
+## 9. 🧩 WHY CODE-FIRST?
+
+1.  **Version Control**: Migration files live in Git. You can see *when* and *why* a column was added.
+2.  **Productivity**: Architects write C# logic; EF handles the SQL dialect (Postgres, SQL Server, etc.).
+3.  **Single Source of Truth**: The code defines the domain, avoiding "drift" between DB and App logic.
+4.  **Microservices Isolation**: Each service owns its DB. Code-First allows fast iteration without waiting for DBAs.
+
+---
+
+## 10. 🚀 INDUSTRY BEST PRACTICES
+
+*   **Concurrency**: Use `RowVersion` (Timestamp) to prevent "Last-In-Wins" updates in high-volume environments.
+*   **Soft Delete**: Never actually `DELETE` rows. Use `IsDeleted` to maintain data integrity for audits.
+*   **Audit Fields**: Always include `CreatedAt` and `UpdatedAt`. In microservices, knowing *when* something happened is critical for debugging distributed flows.
+*   **Outbox Pattern**: Never send a message to Kafka/RabbitMQ inside a DB transaction. Write to an `OutboxEvents` table first, then a background worker sends it. This ensures **Atomicity**.
+*   **Indexing**: Add indices to `ProductId` and `EventKey`. A Workflow service slows down exponentially without proper indexing on lookup keys.
+
+---
+
+**END OF FILE**

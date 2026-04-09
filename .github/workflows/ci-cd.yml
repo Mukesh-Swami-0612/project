@@ -1,0 +1,110 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  DOTNET_VERSION: '8.0.x'
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository_owner }}/ecom
+
+jobs:
+  # ─── BUILD & TEST ────────────────────────────────────────────────
+  build-test:
+    name: Build & Test - ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service:
+          - services/auth/Ecom.Auth
+          - services/catalog/Ecom.Catalog
+          - services/workflow/Ecom.Workflow
+          - services/reporting/Ecom.Reporting
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore
+        run: dotnet restore ${{ matrix.service }}
+
+      - name: Build
+        run: dotnet build ${{ matrix.service }} --no-restore -c Release
+
+      - name: Test with coverage
+        run: |
+          dotnet test ${{ matrix.service }} \
+            --no-build -c Release \
+            --collect:"XPlat Code Coverage" \
+            --results-directory ./coverage
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.service }}
+          path: ./coverage
+
+  # ─── DOCKER BUILD & PUSH ─────────────────────────────────────────
+  docker:
+    name: Docker - ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    needs: build-test
+    if: github.ref == 'refs/heads/main'
+    strategy:
+      matrix:
+        include:
+          - service: auth
+            context: services/auth/Ecom.Auth
+            image: ecom-auth
+          - service: catalog
+            context: services/catalog/Ecom.Catalog
+            image: ecom-catalog
+          - service: workflow
+            context: services/workflow/Ecom.Workflow
+            image: ecom-workflow
+          - service: reporting
+            context: services/reporting/Ecom.Reporting
+            image: ecom-reporting
+          - service: gateway
+            context: gateway/Ecom.Gateway
+            image: ecom-gateway
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.image }}:latest
+
+  # ─── DEPLOY TO STAGING ───────────────────────────────────────────
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: docker
+    if: github.ref == 'refs/heads/main'
+    environment: staging
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy via docker-compose
+        run: |
+          echo "Deploy to staging server via SSH or Azure/AWS CLI"
+          # Example: ssh user@staging-server "cd /app && docker-compose pull && docker-compose up -d"

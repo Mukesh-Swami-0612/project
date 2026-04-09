@@ -1,0 +1,2257 @@
+═══════════════════════════════════════════════════════════════════════════════
+    COMPLETE DATABASE DESIGN WALKTHROUGH - Ecom.Catalog Microservice
+    Entity Framework Core Code-First Approach | Production-Ready Design
+═══════════════════════════════════════════════════════════════════════════════
+
+📋 TABLE OF CONTENTS
+═══════════════════════════════════════════════════════════════════════════════
+1. PROJECT OVERVIEW & DATABASE CONTEXT
+2. ENTITIES - COMPLETE BREAKDOWN
+3. RELATIONSHIPS & CARDINALITY
+4. FLUENT API CONFIGURATIONS
+5. DBCONTEXT IMPLEMENTATION
+6. COMPLETE CODE EXTRACTION
+7. MIGRATIONS & DATABASE GENERATION
+8. DATABASE SCHEMA VISUALIZATION (ER DIAGRAM)
+9. OPTIMIZATION & BEST PRACTICES
+10. REAL-WORLD IMPROVEMENTS
+11. INTERVIEW-READY EXPLANATION
+
+═══════════════════════════════════════════════════════════════════════════════
+1. PROJECT OVERVIEW & DATABASE CONTEXT
+═══════════════════════════════════════════════════════════════════════════════
+
+1.1 PURPOSE OF CATALOG SERVICE
+───────────────────────────────
+
+The Catalog Service is the PRODUCT INFORMATION HUB in an e-commerce ecosystem.
+
+CORE RESPONSIBILITIES:
+• Product lifecycle management (Draft → Published → Archived)
+• Category hierarchy (unlimited nesting: Electronics → Laptops → Gaming)
+• Brand associations
+• Product media/images with ordering
+• Product variants (SKU combinations)
+• CQRS read model for optimized queries
+• Complete audit trail for compliance
+
+REAL-WORLD ANALOGY:
+Think of Amazon's product catalog - millions of products organized by categories,
+brands, with multiple images, variants (size/color), and complete change history.
+
+1.2 SERVICE INTERACTIONS
+────────────────────────
+
+┌─────────────────────────────────────────────────────────────────┐
+│                    MICROSERVICES ECOSYSTEM                      │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  Identity Service                                               │
+│  ↓ (Provides UserId, Email for audit)                          │
+│                                                                 │
+│  CATALOG SERVICE (THIS ONE)                                     │
+│  ├─ SQL Server Database (Products, Categories, Brands)         │
+│  ├─ Publishes Events → RabbitMQ                                │
+│  │                                                              │
+│  ↓ Events consumed by:                                         │
+│  ├─ Order Service (reads product details)                      │
+│  ├─ Basket Service (validates products)                        │
+│  ├─ Workflow Service (updates read model)                      │
+│  └─ Search Service (updates Elasticsearch)                     │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+
+DATABASE INTERACTIONS:
+• Write Operations: Product CRUD → Write Model (normalized)
+• Read Operations: Queries → Read Model (denormalized, CQRS)
+• Event Publishing: After DB commit → RabbitMQ
+• Audit Logging: Every change → AuditLogs table
+
+1.3 WHY CLEAN ARCHITECTURE FOR DATABASE?
+─────────────────────────────────────────
+
+LAYER SEPARATION:
+
+Domain Layer (Ecom.Catalog.Domain)
+├─ Entities (Product, Category, Brand)
+├─ NO database annotations
+├─ NO EF Core dependencies
+└─ Pure C# POCOs (Plain Old CLR Objects)
+
+Infrastructure Layer (Ecom.Catalog.Infrastructure)
+├─ DbContext (CatalogDbContext)
+├─ EF Core Configurations (Fluent API)
+├─ Repositories (data access)
+└─ Migrations
+
+BENEFITS:
+✓ Domain is framework-agnostic (can use with Dapper, NHibernate)
+✓ Easy to test (no database needed for domain logic)
+✓ Can swap databases without touching domain
+✓ Clear separation of concerns
+
+═══════════════════════════════════════════════════════════════════════════════
+2. ENTITIES - COMPLETE BREAKDOWN
+═══════════════════════════════════════════════════════════════════════════════
+
+2.1 PRODUCT ENTITY
+──────────────────
+
+FILE: Ecom.Catalog.Domain/Entities/Product.cs
+
+PURPOSE:
+Core entity representing a sellable product in the catalog.
+
+COMPLETE CODE:
+────────────────────────────────────────────────────────────────────
+namespace Ecom.Catalog.Domain.Entities;
+
+public class Product
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string SKU { get; set; } = string.Empty;
+    public int CategoryId { get; set; }
+    public int? BrandId { get; set; }
+    public int StatusId { get; set; } = 1;
+    public int CreatedBy { get; set; }
+    public bool IsDeleted { get; set; } = false;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? UpdatedAt { get; set; }
+    public byte[]? RowVersion { get; set; }
+
+    // Navigation Properties
+    public Category Category { get; set; } = null!;
+    public Brand? Brand { get; set; }
+    public ProductStatus Status { get; set; } = null!;
+    public ICollection<ProductVariantCombination> Variants { get; set; } = new List<ProductVariantCombination>();
+    public ICollection<MediaAsset> MediaAssets { get; set; } = new List<MediaAsset>();
+}
+────────────────────────────────────────────────────────────────────
+
+PROPERTY BREAKDOWN:
+───────────────────
+
+┌─────────────────┬──────────────┬────────────────────────────────────────┐
+│ Property        │ Type         │ Purpose & Constraints                  │
+├─────────────────┼──────────────┼────────────────────────────────────────┤
+│ Id              │ int          │ Primary Key (auto-increment)           │
+│                 │              │ Database: IDENTITY(1,1)                │
+├─────────────────┼──────────────┼────────────────────────────────────────┤
+│ Name            │ string       │ Product display name                   │
+│                 │              │ Constraint: Required, MaxLength(150)   │
+│                 │              │ Example: "iPhone 15 Pro Max"           │
+├─────────────────┼──────────────┼────────────────────────────────────────┤
+│ SKU             │ string       │ Stock Keeping Unit (unique identifier) │
+│                 │              │ Constraint: Required, MaxLength(100)   │
+│                 │              │ Unique Index: IX_Products_SKU          │
+│                 │              │ Example: "IPHONE-15-PRO-256GB-BLACK"   │
+├─────────────────┼──────────────┼────────────────────────────────────────┤
+│ CategoryId      │ int          │ Foreign Key → Categories.Id            │
+│                 │              │ Constraint: Required                   │
+│                 │              │ Index: IX_Products_CategoryId          │
+├─────────────────┼──────────────┼────────────────────────────────────────┤
+│ BrandId         │ int?         │ Foreign Key → Brands.Id (nullable)     │
+│                 │              │ Nullable: Generic products have no brand│
+│                 │              │ Index: IX_Products_BrandId             │
+├─────────────────┼──────────────┼────────────────────────────────────────┤
+│ StatusId        │ int          │ Foreign Key → ProductStatuses.Id       │
+│                 │              │ Default: 1 (Draft)                     │
+│                 │              │ Index: IX_Products_StatusId            │
+├─────────────────┼──────────────┼────────────────────────────────────────┤
+│ CreatedBy       │ int          │ UserId from Identity service           │
+│                 │              │ Audit field (who created)              │
+├─────────────────┼──────────────┼────────────────────────────────────────┤
+│ IsDeleted       │ bool         │ Soft delete flag                       │
+│                 │              │ Default: false                         │
+│                 │              │ Queries filter: WHERE IsDeleted = 0    │
+├─────────────────┼──────────────┼────────────────────────────────────────┤
+│ CreatedAt       │ DateTime     │ Timestamp of creation (UTC)            │
+│                 │              │ Default: DateTime.UtcNow               │
+├─────────────────┼──────────────┼────────────────────────────────────────┤
+│ UpdatedAt       │ DateTime?    │ Last modification timestamp            │
+│                 │              │ Nullable: null until first update      │
+├─────────────────┼──────────────┼────────────────────────────────────────┤
+│ RowVersion      │ byte[]?      │ Concurrency token (optimistic locking) │
+│                 │              │ SQL: rowversion (auto-increments)      │
+│                 │              │ Prevents lost updates                  │
+└─────────────────┴──────────────┴────────────────────────────────────────┘
+
+NAVIGATION PROPERTIES:
+──────────────────────
+
+Category (Required)
+├─ Type: Category
+├─ Relationship: Many-to-One
+├─ Purpose: Product belongs to one category
+└─ Usage: product.Category.Name
+
+Brand (Optional)
+├─ Type: Brand?
+├─ Relationship: Many-to-One (nullable)
+├─ Purpose: Product may have a brand
+└─ Usage: product.Brand?.Name
+
+Status (Required)
+├─ Type: ProductStatus
+├─ Relationship: Many-to-One
+├─ Purpose: Product lifecycle state
+└─ Usage: product.Status.StatusName
+
+Variants (Collection)
+├─ Type: ICollection<ProductVariantCombination>
+├─ Relationship: One-to-Many
+├─ Purpose: Product can have multiple variants
+└─ Example: T-Shirt → [Small-Red, Medium-Blue, Large-Green]
+
+MediaAssets (Collection)
+├─ Type: ICollection<MediaAsset>
+├─ Relationship: One-to-Many
+├─ Purpose: Product can have multiple images
+└─ Example: iPhone → [front.jpg, back.jpg, side.jpg]
+
+WHY THIS DESIGN?
+────────────────
+
+1. SKU UNIQUENESS
+   Problem: Duplicate products
+   Solution: Unique index on SKU column
+   Benefit: Database-level enforcement
+
+2. SOFT DELETE
+   Problem: Hard delete breaks referential integrity
+   Solution: IsDeleted flag
+   Benefit: Can restore, maintains audit trail
+
+3. OPTIMISTIC CONCURRENCY
+   Problem: Two users update simultaneously → lost update
+   Solution: RowVersion (auto-increments on update)
+   Benefit: Detects conflicts, prevents data loss
+
+4. NULLABLE BRAND
+   Problem: Not all products have brands
+   Solution: BrandId is nullable (int?)
+   Benefit: Flexibility for generic products
+
+5. NAVIGATION PROPERTIES
+   Problem: Need related data (category name, brand name)
+   Solution: EF Core navigation properties
+   Benefit: Eager loading with Include(), avoids N+1 queries
+
+
+2.2 CATEGORY ENTITY
+───────────────────
+
+FILE: Ecom.Catalog.Domain/Entities/Category.cs
+
+PURPOSE:
+Hierarchical category structure with self-referencing relationship.
+Supports unlimited nesting: Electronics → Laptops → Gaming Laptops
+
+COMPLETE CODE:
+────────────────────────────────────────────────────────────────────
+namespace Ecom.Catalog.Domain.Entities;
+
+public class Category
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public int? ParentCategoryId { get; set; }
+    public bool IsDeleted { get; set; } = false;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? UpdatedAt { get; set; }
+    public byte[]? RowVersion { get; set; }
+
+    // Navigation Properties
+    public Category? ParentCategory { get; set; }
+    public ICollection<Category> SubCategories { get; set; } = new List<Category>();
+    public ICollection<Product> Products { get; set; } = new List<Product>();
+}
+────────────────────────────────────────────────────────────────────
+
+PROPERTY BREAKDOWN:
+───────────────────
+
+┌──────────────────┬──────────────┬────────────────────────────────────────┐
+│ Property         │ Type         │ Purpose & Constraints                  │
+├──────────────────┼──────────────┼────────────────────────────────────────┤
+│ Id               │ int          │ Primary Key                            │
+├──────────────────┼──────────────┼────────────────────────────────────────┤
+│ Name             │ string       │ Category name                          │
+│                  │              │ Constraint: Required, MaxLength(100)   │
+│                  │              │ Example: "Electronics", "Laptops"      │
+├──────────────────┼──────────────┼────────────────────────────────────────┤
+│ ParentCategoryId │ int?         │ Self-referencing FK (nullable)         │
+│                  │              │ NULL = Root category                   │
+│                  │              │ Index: IX_Categories_ParentCategoryId  │
+├──────────────────┼──────────────┼────────────────────────────────────────┤
+│ IsDeleted        │ bool         │ Soft delete flag                       │
+├──────────────────┼──────────────┼────────────────────────────────────────┤
+│ CreatedAt        │ DateTime     │ Creation timestamp                     │
+├──────────────────┼──────────────┼────────────────────────────────────────┤
+│ UpdatedAt        │ DateTime?    │ Last update timestamp                  │
+├──────────────────┼──────────────┼────────────────────────────────────────┤
+│ RowVersion       │ byte[]?      │ Concurrency token                      │
+└──────────────────┴──────────────┴────────────────────────────────────────┘
+
+SELF-REFERENCING RELATIONSHIP:
+───────────────────────────────
+
+ParentCategory (Optional)
+├─ Type: Category?
+├─ Relationship: Many-to-One (self)
+├─ Purpose: Points to parent category
+└─ Example: "Gaming Laptops".ParentCategory → "Laptops"
+
+SubCategories (Collection)
+├─ Type: ICollection<Category>
+├─ Relationship: One-to-Many (self)
+├─ Purpose: Child categories
+└─ Example: "Electronics".SubCategories → [Laptops, Phones, Tablets]
+
+Products (Collection)
+├─ Type: ICollection<Product>
+├─ Relationship: One-to-Many
+├─ Purpose: Products in this category
+└─ Example: "Laptops".Products → [MacBook, Dell XPS, HP Spectre]
+
+HIERARCHY EXAMPLE:
+──────────────────
+
+Electronics (Id=1, ParentId=NULL)
+  ├─ Laptops (Id=2, ParentId=1)
+  │    ├─ Gaming Laptops (Id=3, ParentId=2)
+  │    └─ Business Laptops (Id=4, ParentId=2)
+  ├─ Phones (Id=5, ParentId=1)
+  │    ├─ Smartphones (Id=6, ParentId=5)
+  │    └─ Feature Phones (Id=7, ParentId=5)
+  └─ Tablets (Id=8, ParentId=1)
+
+SQL REPRESENTATION:
+───────────────────
+
+Categories Table:
+┌────┬──────────────────┬──────────────────┐
+│ Id │ Name             │ ParentCategoryId │
+├────┼──────────────────┼──────────────────┤
+│ 1  │ Electronics      │ NULL             │ ← Root
+│ 2  │ Laptops          │ 1                │ ← Child of Electronics
+│ 3  │ Gaming Laptops   │ 2                │ ← Child of Laptops
+│ 4  │ Business Laptops │ 2                │ ← Child of Laptops
+│ 5  │ Phones           │ 1                │ ← Child of Electronics
+└────┴──────────────────┴──────────────────┘
+
+QUERIES:
+────────
+
+// Get all root categories
+var roots = categories.Where(c => c.ParentCategoryId == null);
+
+// Get breadcrumb: Gaming Laptops → Laptops → Electronics
+var breadcrumb = new List<string>();
+var current = gamingLaptops;
+while (current != null) {
+    breadcrumb.Insert(0, current.Name);
+    current = current.ParentCategory;
+}
+
+WHY THIS DESIGN?
+────────────────
+
+1. UNLIMITED NESTING
+   Benefit: Flexible hierarchy (can go 10 levels deep)
+   Trade-off: Complex recursive queries
+
+2. RESTRICT DELETE BEHAVIOR
+   Configuration: OnDelete(DeleteBehavior.Restrict)
+   Reason: Prevent accidental cascade deletion of entire tree
+   Must explicitly handle subcategories before deleting parent
+
+3. SELF-REFERENCING FK
+   Benefit: Single table for entire hierarchy
+   Alternative: Separate tables (CategoryLevel1, CategoryLevel2) - inflexible
+
+2.3 BRAND ENTITY
+────────────────
+
+FILE: Ecom.Catalog.Domain/Entities/Brand.cs
+
+PURPOSE:
+Simple lookup table for product brands/manufacturers.
+
+COMPLETE CODE:
+────────────────────────────────────────────────────────────────────
+namespace Ecom.Catalog.Domain.Entities;
+
+public class Brand
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public bool IsDeleted { get; set; } = false;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? UpdatedAt { get; set; }
+    public byte[]? RowVersion { get; set; }
+}
+────────────────────────────────────────────────────────────────────
+
+PROPERTY BREAKDOWN:
+───────────────────
+
+┌────────────┬──────────────┬────────────────────────────────────────┐
+│ Property   │ Type         │ Purpose                                │
+├────────────┼──────────────┼────────────────────────────────────────┤
+│ Id         │ int          │ Primary Key                            │
+├────────────┼──────────────┼────────────────────────────────────────┤
+│ Name       │ string       │ Brand name (Apple, Nike, Samsung)      │
+│            │              │ No MaxLength constraint (simple lookup)│
+├────────────┼──────────────┼────────────────────────────────────────┤
+│ IsDeleted  │ bool         │ Soft delete                            │
+├────────────┼──────────────┼────────────────────────────────────────┤
+│ CreatedAt  │ DateTime     │ Creation timestamp                     │
+├────────────┼──────────────┼────────────────────────────────────────┤
+│ UpdatedAt  │ DateTime?    │ Last update timestamp                  │
+├────────────┼──────────────┼────────────────────────────────────────┤
+│ RowVersion │ byte[]?      │ Concurrency token                      │
+└────────────┴──────────────┴────────────────────────────────────────┘
+
+WHY NO NAVIGATION PROPERTIES?
+──────────────────────────────
+
+Brand entity has NO navigation property to Products.
+Reason: One-way relationship (Product → Brand)
+Benefit: Simpler entity, no circular references
+
+If needed, can query:
+var products = _context.Products.Where(p => p.BrandId == brandId);
+
+2.4 PRODUCT STATUS ENTITY
+──────────────────────────
+
+FILE: Ecom.Catalog.Domain/Entities/ProductStatus.cs
+
+PURPOSE:
+Lookup table for product lifecycle states.
+
+COMPLETE CODE:
+────────────────────────────────────────────────────────────────────
+namespace Ecom.Catalog.Domain.Entities;
+
+public class ProductStatus
+{
+    public int Id { get; set; }
+    public string StatusName { get; set; } = string.Empty;
+}
+────────────────────────────────────────────────────────────────────
+
+TYPICAL VALUES:
+───────────────
+
+┌────┬─────────────────┬──────────────────────────────────────────┐
+│ Id │ StatusName      │ Description                              │
+├────┼─────────────────┼──────────────────────────────────────────┤
+│ 1  │ Draft           │ Product created, not complete            │
+│ 2  │ InEnrichment    │ Content team adding details              │
+│ 3  │ ReadyForReview  │ Submitted for approval                   │
+│ 4  │ Approved        │ Manager approved                         │
+│ 5  │ Published       │ Live on storefront                       │
+│ 6  │ Rejected        │ Manager rejected                         │
+│ 7  │ Archived        │ No longer sold                           │
+└────┴─────────────────┴──────────────────────────────────────────┘
+
+WHY SEPARATE TABLE?
+───────────────────
+
+Alternative 1: Enum in code
+Problem: Can't add new statuses without code deployment
+Solution: Database table (flexible)
+
+Alternative 2: String column in Products
+Problem: No referential integrity, typos possible
+Solution: Foreign key to ProductStatuses
+
+2.5 PRODUCT VARIANT COMBINATION ENTITY
+───────────────────────────────────────
+
+FILE: Ecom.Catalog.Domain/Entities/ProductVariantCombination.cs
+
+PURPOSE:
+Represents product variations (size, color, etc.) with unique SKUs.
+
+COMPLETE CODE:
+────────────────────────────────────────────────────────────────────
+namespace Ecom.Catalog.Domain.Entities;
+
+public class ProductVariantCombination
+{
+    public int Id { get; set; }
+    public int ProductId { get; set; }
+    public string SKU { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? UpdatedAt { get; set; }
+    public byte[]? RowVersion { get; set; }
+
+    // Navigation Property
+    public Product Product { get; set; } = null!;
+}
+────────────────────────────────────────────────────────────────────
+
+PROPERTY BREAKDOWN:
+───────────────────
+
+┌────────────┬──────────────┬────────────────────────────────────────┐
+│ Property   │ Type         │ Purpose                                │
+├────────────┼──────────────┼────────────────────────────────────────┤
+│ Id         │ int          │ Primary Key                            │
+├────────────┼──────────────┼────────────────────────────────────────┤
+│ ProductId  │ int          │ Foreign Key → Products.Id              │
+│            │              │ Index: IX_ProductVariants_ProductId    │
+├────────────┼──────────────┼────────────────────────────────────────┤
+│ SKU        │ string       │ Unique SKU for this variant            │
+│            │              │ Example: "TSHIRT-RED-M"                │
+├────────────┼──────────────┼────────────────────────────────────────┤
+│ CreatedAt  │ DateTime     │ Creation timestamp                     │
+├────────────┼──────────────┼────────────────────────────────────────┤
+│ UpdatedAt  │ DateTime?    │ Last update timestamp                  │
+├────────────┼──────────────┼────────────────────────────────────────┤
+│ RowVersion │ byte[]?      │ Concurrency token                      │
+└────────────┴──────────────┴────────────────────────────────────────┘
+
+EXAMPLE:
+────────
+
+Product: "T-Shirt" (base product)
+Variants:
+├─ Id=1, ProductId=100, SKU="TSHIRT-RED-S"   (Red, Small)
+├─ Id=2, ProductId=100, SKU="TSHIRT-RED-M"   (Red, Medium)
+├─ Id=3, ProductId=100, SKU="TSHIRT-BLUE-L"  (Blue, Large)
+└─ Id=4, ProductId=100, SKU="TSHIRT-GREEN-XL" (Green, X-Large)
+
+WHY THIS DESIGN?
+────────────────
+
+1. SEPARATE SKUS
+   Each variant has unique SKU for inventory tracking
+
+2. CASCADE DELETE
+   If product deleted → variants deleted automatically
+   Configuration: OnDelete(DeleteBehavior.Cascade)
+
+3. SIMPLIFIED MODEL
+   Could have separate Attribute/AttributeValue tables
+   Trade-off: Simpler but less flexible
+
+2.6 MEDIA ASSET ENTITY
+──────────────────────
+
+FILE: Ecom.Catalog.Domain/Entities/MediaAsset.cs
+
+PURPOSE:
+Product images and media files with ordering and primary image selection.
+
+COMPLETE CODE:
+────────────────────────────────────────────────────────────────────
+namespace Ecom.Catalog.Domain.Entities;
+
+public class MediaAsset
+{
+    public int Id { get; set; }
+    public int ProductId { get; set; }
+    public string FileUrl { get; set; } = string.Empty;
+    public string? FileType { get; set; }
+    public bool IsPrimary { get; set; } = false;
+    public int SortOrder { get; set; } = 0;
+    public string? AltText { get; set; }
+    public bool IsDeleted { get; set; } = false;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? UpdatedAt { get; set; }
+    public byte[]? RowVersion { get; set; }
+
+    // Navigation Property
+    public Product Product { get; set; } = null!;
+}
+────────────────────────────────────────────────────────────────────
+
+PROPERTY BREAKDOWN:
+───────────────────
+
+┌────────────┬──────────────┬────────────────────────────────────────┐
+│ Property   │ Type         │ Purpose & Constraints                  │
+├────────────┼──────────────┼────────────────────────────────────────┤
+│ Id         │ int          │ Primary Key                            │
+├────────────┼──────────────┼────────────────────────────────────────┤
+│ ProductId  │ int          │ Foreign Key → Products.Id              │
+│            │              │ Index: IX_MediaAssets_ProductId        │
+├────────────┼──────────────┼────────────────────────────────────────┤
+│ FileUrl    │ string       │ URL to image file                      │
+│            │              │ Constraint: Required, MaxLength(500)   │
+│            │              │ Example: "https://cdn.../iphone.jpg"   │
+├────────────┼──────────────┼────────────────────────────────────────┤
+│ FileType   │ string?      │ MIME type (image/jpeg, image/png)      │
+│            │              │ Constraint: MaxLength(50)              │
+├────────────┼──────────────┼────────────────────────────────────────┤
+│ IsPrimary  │ bool         │ Main product image flag                │
+│            │              │ Default: false                         │
+│            │              │ Business Rule: Only one per product    │
+├────────────┼──────────────┼────────────────────────────────────────┤
+│ SortOrder  │ int          │ Display order (0, 1, 2, ...)           │
+│            │              │ Default: 0                             │
+│            │              │ Usage: ORDER BY SortOrder              │
+├────────────┼──────────────┼────────────────────────────────────────┤
+│ AltText    │ string?      │ Accessibility text for images          │
+│            │              │ Constraint: MaxLength(255)             │
+│            │              │ SEO benefit, WCAG compliance           │
+├────────────┼──────────────┼────────────────────────────────────────┤
+│ IsDeleted  │ bool         │ Soft delete flag                       │
+├────────────┼──────────────┼────────────────────────────────────────┤
+│ CreatedAt  │ DateTime     │ Creation timestamp                     │
+├────────────┼──────────────┼────────────────────────────────────────┤
+│ UpdatedAt  │ DateTime?    │ Last update timestamp                  │
+├────────────┼──────────────┼────────────────────────────────────────┤
+│ RowVersion │ byte[]?      │ Concurrency token                      │
+└────────────┴──────────────┴────────────────────────────────────────┘
+
+EXAMPLE:
+────────
+
+Product: "iPhone 15 Pro"
+MediaAssets:
+├─ Id=1, ProductId=100, FileUrl="front.jpg", IsPrimary=true, SortOrder=0
+├─ Id=2, ProductId=100, FileUrl="back.jpg", IsPrimary=false, SortOrder=1
+├─ Id=3, ProductId=100, FileUrl="side.jpg", IsPrimary=false, SortOrder=2
+└─ Id=4, ProductId=100, FileUrl="box.jpg", IsPrimary=false, SortOrder=3
+
+QUERY:
+──────
+
+// Get primary image
+var primaryImage = product.MediaAssets.FirstOrDefault(m => m.IsPrimary);
+
+// Get all images ordered
+var images = product.MediaAssets.OrderBy(m => m.SortOrder).ToList();
+
+WHY THIS DESIGN?
+────────────────
+
+1. ISPRIMARY FLAG
+   Problem: Need to identify main product image
+   Solution: Boolean flag
+   Business Rule: Enforce only one primary per product (application logic)
+
+2. SORTORDER
+   Problem: Need ordered gallery display
+   Solution: Integer field for ordering
+   Benefit: Flexible reordering without changing IDs
+
+3. ALTTEXT
+   Problem: Accessibility compliance (WCAG)
+   Solution: Alt text field
+   Benefit: SEO, screen readers
+
+4. CASCADE DELETE
+   If product deleted → images deleted
+   Configuration: OnDelete(DeleteBehavior.Cascade)
+
+2.7 PRODUCT READ MODEL ENTITY (CQRS)
+─────────────────────────────────────
+
+FILE: Ecom.Catalog.Domain/Entities/ProductReadModel.cs
+
+PURPOSE:
+Denormalized view for high-performance queries (CQRS pattern).
+Updated asynchronously via domain events.
+
+COMPLETE CODE:
+────────────────────────────────────────────────────────────────────
+namespace Ecom.Catalog.Domain.Entities;
+
+// CQRS Read Model — updated via domain events from Workflow service
+public class ProductReadModel
+{
+    public int Id { get; set; }
+    public string ProductName { get; set; } = string.Empty;
+    public string CategoryName { get; set; } = string.Empty;
+    public decimal Price { get; set; }
+    public int Stock { get; set; }
+    public string Status { get; set; } = string.Empty;
+    public DateTime? UpdatedAt { get; set; }
+}
+────────────────────────────────────────────────────────────────────
+
+PROPERTY BREAKDOWN:
+───────────────────
+
+┌──────────────┬──────────────┬────────────────────────────────────────┐
+│ Property     │ Type         │ Purpose                                │
+├──────────────┼──────────────┼────────────────────────────────────────┤
+│ Id           │ int          │ Primary Key (matches Product.Id)       │
+├──────────────┼──────────────┼────────────────────────────────────────┤
+│ ProductName  │ string       │ Denormalized product name              │
+│              │              │ Constraint: Required, MaxLength(150)   │
+├──────────────┼──────────────┼────────────────────────────────────────┤
+│ CategoryName │ string       │ Denormalized category name             │
+│              │              │ Constraint: Required, MaxLength(100)   │
+│              │              │ NO JOIN needed!                        │
+├──────────────┼──────────────┼────────────────────────────────────────┤
+│ Price        │ decimal      │ Current price                          │
+│              │              │ Precision: decimal(18,2)               │
+├──────────────┼──────────────┼────────────────────────────────────────┤
+│ Stock        │ int          │ Available quantity                     │
+├──────────────┼──────────────┼────────────────────────────────────────┤
+│ Status       │ string       │ Denormalized status name               │
+│              │              │ Constraint: Required, MaxLength(50)    │
+├──────────────┼──────────────┼────────────────────────────────────────┤
+│ UpdatedAt    │ DateTime?    │ Last sync timestamp                    │
+└──────────────┴──────────────┴────────────────────────────────────────┘
+
+CQRS PATTERN:
+─────────────
+
+WRITE MODEL (Normalized):
+┌──────────┐     ┌────────────┐     ┌────────────────┐
+│ Products │────▶│ Categories │     │ ProductStatuses│
+└──────────┘     └────────────┘     └────────────────┘
+     │
+     │ (Joins required for queries)
+     ▼
+
+READ MODEL (Denormalized):
+┌────────────────────┐
+│ ProductReadModels  │ ← No joins needed!
+│ - ProductName      │
+│ - CategoryName     │
+│ - Price            │
+│ - Stock            │
+│ - Status           │
+└────────────────────┘
+
+UPDATE FLOW:
+────────────
+
+1. Product created/updated in write model
+2. ProductCreatedEvent published to RabbitMQ
+3. Workflow Service consumes event
+4. Updates ProductReadModel table
+5. Storefront queries ProductReadModel (fast!)
+
+QUERY COMPARISON:
+─────────────────
+
+WITHOUT READ MODEL (3 joins):
+```sql
+SELECT p.Name, c.Name, ps.StatusName, p.Price
+FROM Products p
+JOIN Categories c ON p.CategoryId = c.Id
+JOIN ProductStatuses ps ON p.StatusId = ps.Id
+WHERE p.IsDeleted = 0
+```
+
+WITH READ MODEL (no joins):
+```sql
+SELECT ProductName, CategoryName, Status, Price
+FROM ProductReadModels
+```
+
+WHY THIS DESIGN?
+────────────────
+
+1. PERFORMANCE
+   Benefit: No joins = faster queries
+   Trade-off: Eventual consistency (slight delay in updates)
+
+2. SCALABILITY
+   Can use separate database (Redis, MongoDB)
+   Can cache aggressively
+
+3. FLEXIBILITY
+   Optimized for specific query patterns
+   Can have multiple read models for different use cases
+
+2.8 AUDIT LOG ENTITY
+─────────────────────
+
+FILE: Ecom.Catalog.Domain/Entities/AuditLog.cs
+
+PURPOSE:
+Complete change tracking for compliance (GDPR, SOX, HIPAA).
+
+COMPLETE CODE:
+────────────────────────────────────────────────────────────────────
+namespace Ecom.Catalog.Domain.Entities;
+
+public class AuditLog
+{
+    public int Id { get; set; }
+    public string EntityName { get; set; } = string.Empty;
+    public int EntityId { get; set; }
+    public string Action { get; set; } = string.Empty; // Created, Updated, Deleted
+    public string? Changes { get; set; } // JSON of changes
+    public int UserId { get; set; }
+    public string UserEmail { get; set; } = string.Empty;
+    public DateTime Timestamp { get; set; } = DateTime.UtcNow;
+    public string? IpAddress { get; set; }
+}
+────────────────────────────────────────────────────────────────────
+
+PROPERTY BREAKDOWN:
+───────────────────
+
+┌────────────┬──────────────┬────────────────────────────────────────┐
+│ Property   │ Type         │ Purpose & Constraints                  │
+├────────────┼──────────────┼────────────────────────────────────────┤
+│ Id         │ int          │ Primary Key                            │
+├────────────┼──────────────┼────────────────────────────────────────┤
+│ EntityName │ string       │ Table name (Product, Category)         │
+│            │              │ Constraint: Required, MaxLength(100)   │
+│            │              │ Index: IX_AuditLogs_EntityName_EntityId│
+├────────────┼──────────────┼────────────────────────────────────────┤
+│ EntityId   │ int          │ Record ID (Product.Id)                 │
+│            │              │ Composite Index with EntityName        │
+├────────────┼──────────────┼────────────────────────────────────────┤
+│ Action     │ string       │ Operation (Created, Updated, Deleted)  │
+│            │              │ Constraint: Required, MaxLength(50)    │
+├────────────┼──────────────┼────────────────────────────────────────┤
+│ Changes    │ string?      │ JSON of changes                        │
+│            │              │ Example: {"Old":{"Name":"A"},"New":{}} │
+├────────────┼──────────────┼────────────────────────────────────────┤
+│ UserId     │ int          │ Who made the change                    │
+│            │              │ From Identity service                  │
+├────────────┼──────────────┼────────────────────────────────────────┤
+│ UserEmail  │ string       │ User email for readability             │
+│            │              │ Constraint: Required, MaxLength(256)   │
+├────────────┼──────────────┼────────────────────────────────────────┤
+│ Timestamp  │ DateTime     │ When change occurred (UTC)             │
+│            │              │ Index: IX_AuditLogs_Timestamp          │
+├────────────┼──────────────┼────────────────────────────────────────┤
+│ IpAddress  │ string?      │ Client IP address                      │
+│            │              │ Constraint: MaxLength(45) (IPv6)       │
+└────────────┴──────────────┴────────────────────────────────────────┘
+
+EXAMPLE AUDIT LOG ENTRY:
+────────────────────────
+
+```json
+{
+  "Id": 1,
+  "EntityName": "Product",
+  "EntityId": 123,
+  "Action": "Updated",
+  "Changes": "{\"Old\":{\"Name\":\"iPhone 14\",\"Price\":999},\"New\":{\"Name\":\"iPhone 15\",\"Price\":1099}}",
+  "UserId": 42,
+  "UserEmail": "john@example.com",
+  "Timestamp": "2026-04-08T10:30:00Z",
+  "IpAddress": "192.168.1.100"
+}
+```
+
+INDEXES:
+────────
+
+1. Composite Index: (EntityName, EntityId)
+   Query: "Show all changes to Product #123"
+   ```sql
+   SELECT * FROM AuditLogs 
+   WHERE EntityName = 'Product' AND EntityId = 123
+   ORDER BY Timestamp DESC
+   ```
+
+2. Index: Timestamp
+   Query: "Show all changes in last 24 hours"
+   ```sql
+   SELECT * FROM AuditLogs 
+   WHERE Timestamp >= DATEADD(day, -1, GETDATE())
+   ```
+
+WHY THIS DESIGN?
+────────────────
+
+1. COMPLIANCE
+   GDPR: Track who accessed/modified data
+   SOX: Financial audit trail
+   HIPAA: Healthcare data tracking
+
+2. DEBUGGING
+   Can reconstruct what happened
+   Who changed what and when
+
+3. SECURITY
+   Detect unauthorized changes
+   Forensic analysis
+
+4. ROLLBACK
+   Can reconstruct previous states from Changes JSON
+
+═══════════════════════════════════════════════════════════════════════════════
+3. RELATIONSHIPS & CARDINALITY
+═══════════════════════════════════════════════════════════════════════════════
+
+3.1 COMPLETE RELATIONSHIP DIAGRAM
+──────────────────────────────────
+
+
+┌─────────────────────────────────────────────────────────────────┐
+│                    ENTITY RELATIONSHIPS                         │
+└─────────────────────────────────────────────────────────────────┘
+
+                    ┌──────────────┐
+                    │ ProductStatus│
+                    │──────────────│
+                    │ PK: Id       │
+                    │ StatusName   │
+                    └──────┬───────┘
+                           │ 1
+                           │
+                           │ *
+    ┌──────────────┐       │       ┌──────────────┐
+    │    Brand     │       │       │   Category   │
+    │──────────────│       │       │──────────────│
+    │ PK: Id       │       │       │ PK: Id       │
+    │ Name         │       │       │ Name         │
+    │ IsDeleted    │       │       │ FK: ParentId │───┐
+    └──────┬───────┘       │       └──────┬───────┘   │
+           │ 1             │              │ 1         │ Self-
+           │               │              │           │ Reference
+           │ *             │              │ *         │
+           │               │              │           │
+           │       ┌───────┴──────────────┴───┐       │
+           │       │                          │       │
+           └───────┤       Product            │◄──────┘
+                   │──────────────────────────│
+                   │ PK: Id                   │
+                   │ Name, SKU (Unique)       │
+                   │ FK: CategoryId           │
+                   │ FK: BrandId (Nullable)   │
+                   │ FK: StatusId             │
+                   │ CreatedBy, IsDeleted     │
+                   │ CreatedAt, UpdatedAt     │
+                   │ RowVersion               │
+                   └──────────┬───────────────┘
+                              │ 1
+                ┌─────────────┴─────────────┐
+                │                           │
+                │ *                         │ *
+                │                           │
+    ┌───────────┴──────────┐    ┌──────────┴────────────┐
+    │ ProductVariant       │    │    MediaAsset         │
+    │  Combination         │    │───────────────────────│
+    │──────────────────────│    │ PK: Id                │
+    │ PK: Id               │    │ FK: ProductId         │
+    │ FK: ProductId        │    │ FileUrl               │
+    │ SKU                  │    │ FileType              │
+    │ CreatedAt, UpdatedAt │    │ IsPrimary, SortOrder  │
+    │ RowVersion           │    │ AltText               │
+    └──────────────────────┘    │ IsDeleted             │
+                                │ CreatedAt, UpdatedAt  │
+                                │ RowVersion            │
+                                └───────────────────────┘
+
+SEPARATE TABLES (No Direct FK):
+┌──────────────────────┐       ┌──────────────────────┐
+│ ProductReadModel     │       │     AuditLog         │
+│──────────────────────│       │──────────────────────│
+│ PK: Id               │       │ PK: Id               │
+│ ProductName          │       │ EntityName, EntityId │
+│ CategoryName         │       │ Action, Changes      │
+│ Price, Stock, Status │       │ UserId, UserEmail    │
+│ UpdatedAt            │       │ Timestamp, IpAddress │
+└──────────────────────┘       └──────────────────────┘
+
+3.2 RELATIONSHIP DETAILS
+────────────────────────
+
+┌──────────────────────────────────────────────────────────────────┐
+│ RELATIONSHIP 1: Product ↔ Category (Many-to-One, Required)      │
+├──────────────────────────────────────────────────────────────────┤
+│ Cardinality: Many Products → One Category                       │
+│ Foreign Key: Product.CategoryId → Category.Id                   │
+│ Delete Behavior: Cascade (delete category → delete products)    │
+│ Navigation: Product.Category, Category.Products                 │
+│                                                                  │
+│ Configuration:                                                   │
+│   builder.HasOne(p => p.Category)                               │
+│          .WithMany(c => c.Products)                             │
+│          .HasForeignKey(p => p.CategoryId);                     │
+│                                                                  │
+│ SQL:                                                             │
+│   ALTER TABLE Products                                          │
+│   ADD CONSTRAINT FK_Products_Categories_CategoryId             │
+│   FOREIGN KEY (CategoryId) REFERENCES Categories(Id)           │
+│   ON DELETE CASCADE;                                            │
+└──────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────┐
+│ RELATIONSHIP 2: Product ↔ Brand (Many-to-One, Optional)         │
+├──────────────────────────────────────────────────────────────────┤
+│ Cardinality: Many Products → One Brand (Nullable)               │
+│ Foreign Key: Product.BrandId → Brand.Id                         │
+│ Delete Behavior: SetNull (delete brand → set BrandId to NULL)   │
+│ Navigation: Product.Brand (one-way, no Brand.Products)          │
+│                                                                  │
+│ Configuration:                                                   │
+│   builder.HasOne(p => p.Brand)                                  │
+│          .WithMany()  // No navigation property in Brand        │
+│          .HasForeignKey(p => p.BrandId);                        │
+│                                                                  │
+│ SQL:                                                             │
+│   ALTER TABLE Products                                          │
+│   ADD CONSTRAINT FK_Products_Brands_BrandId                    │
+│   FOREIGN KEY (BrandId) REFERENCES Brands(Id)                  │
+│   ON DELETE SET NULL;                                           │
+└──────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────┐
+│ RELATIONSHIP 3: Product ↔ ProductStatus (Many-to-One, Required) │
+├──────────────────────────────────────────────────────────────────┤
+│ Cardinality: Many Products → One Status                         │
+│ Foreign Key: Product.StatusId → ProductStatus.Id                │
+│ Delete Behavior: Restrict (cannot delete status if in use)      │
+│ Navigation: Product.Status (one-way)                            │
+│                                                                  │
+│ Configuration:                                                   │
+│   builder.HasOne(p => p.Status)                                 │
+│          .WithMany()                                            │
+│          .HasForeignKey(p => p.StatusId);                       │
+└──────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────┐
+│ RELATIONSHIP 4: Product ↔ ProductVariantCombination             │
+│                (One-to-Many)                                     │
+├──────────────────────────────────────────────────────────────────┤
+│ Cardinality: One Product → Many Variants                        │
+│ Foreign Key: ProductVariantCombination.ProductId → Product.Id   │
+│ Delete Behavior: Cascade (delete product → delete variants)     │
+│ Navigation: Product.Variants, ProductVariant.Product            │
+│                                                                  │
+│ Configuration:                                                   │
+│   builder.HasOne(v => v.Product)                                │
+│          .WithMany(p => p.Variants)                             │
+│          .HasForeignKey(v => v.ProductId)                       │
+│          .OnDelete(DeleteBehavior.Cascade);                     │
+└──────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────┐
+│ RELATIONSHIP 5: Product ↔ MediaAsset (One-to-Many)              │
+├──────────────────────────────────────────────────────────────────┤
+│ Cardinality: One Product → Many Media Assets                    │
+│ Foreign Key: MediaAsset.ProductId → Product.Id                  │
+│ Delete Behavior: Cascade (delete product → delete images)       │
+│ Navigation: Product.MediaAssets, MediaAsset.Product             │
+│                                                                  │
+│ Configuration:                                                   │
+│   builder.HasOne(m => m.Product)                                │
+│          .WithMany(p => p.MediaAssets)                          │
+│          .HasForeignKey(m => m.ProductId)                       │
+│          .OnDelete(DeleteBehavior.Cascade);                     │
+└──────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────┐
+│ RELATIONSHIP 6: Category ↔ Category (Self-Referencing)          │
+├──────────────────────────────────────────────────────────────────┤
+│ Cardinality: One Parent → Many Children                         │
+│ Foreign Key: Category.ParentCategoryId → Category.Id            │
+│ Delete Behavior: Restrict (prevent accidental cascade)          │
+│ Navigation: Category.ParentCategory, Category.SubCategories     │
+│                                                                  │
+│ Configuration:                                                   │
+│   builder.HasOne(c => c.ParentCategory)                         │
+│          .WithMany(c => c.SubCategories)                        │
+│          .HasForeignKey(c => c.ParentCategoryId)                │
+│          .OnDelete(DeleteBehavior.Restrict);                    │
+│                                                                  │
+│ WHY RESTRICT:                                                    │
+│ Prevents accidental deletion of entire category tree.           │
+│ Must explicitly handle subcategories before deleting parent.    │
+└──────────────────────────────────────────────────────────────────┘
+
+3.3 NO JUNCTION TABLES
+──────────────────────
+
+This design uses NO many-to-many relationships, therefore NO junction tables.
+
+All relationships are:
+• One-to-Many (Product → Variants, Product → MediaAssets)
+• Many-to-One (Product → Category, Product → Brand)
+• Self-Referencing (Category → Category)
+
+IF we had Many-to-Many (e.g., Product ↔ Tags):
+Would need junction table: ProductTags(ProductId, TagId)
+
+═══════════════════════════════════════════════════════════════════════════════
+4. FLUENT API CONFIGURATIONS
+═══════════════════════════════════════════════════════════════════════════════
+
+4.1 PRODUCT CONFIGURATION
+─────────────────────────
+
+FILE: Ecom.Catalog.Infrastructure/Persistence/Configurations/ProductConfiguration.cs
+
+COMPLETE CODE:
+────────────────────────────────────────────────────────────────────
+using Ecom.Catalog.Domain.Entities;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
+
+namespace Ecom.Catalog.Infrastructure.Persistence.Configurations;
+
+public class ProductConfiguration : IEntityTypeConfiguration<Product>
+{
+    public void Configure(EntityTypeBuilder<Product> builder)
+    {
+        // Primary Key
+        builder.HasKey(p => p.Id);
+        
+        // Properties
+        builder.Property(p => p.Name)
+               .IsRequired()
+               .HasMaxLength(150);
+        
+        builder.Property(p => p.SKU)
+               .IsRequired()
+               .HasMaxLength(100);
+        
+        // Indexes
+        builder.HasIndex(p => p.SKU)
+               .IsUnique()
+               .HasDatabaseName("IX_Products_SKU");
+        
+        builder.HasIndex(p => new { p.Name, p.SKU })
+               .HasDatabaseName("IX_Product_Search");
+        
+        // Concurrency Token
+        builder.Property(p => p.RowVersion)
+               .IsRowVersion();
+        
+        // Relationships
+        builder.HasOne(p => p.Category)
+               .WithMany(c => c.Products)
+               .HasForeignKey(p => p.CategoryId)
+               .OnDelete(DeleteBehavior.Cascade);
+        
+        builder.HasOne(p => p.Brand)
+               .WithMany()
+               .HasForeignKey(p => p.BrandId)
+               .OnDelete(DeleteBehavior.SetNull);
+        
+        builder.HasOne(p => p.Status)
+               .WithMany()
+               .HasForeignKey(p => p.StatusId)
+               .OnDelete(DeleteBehavior.Restrict);
+    }
+}
+────────────────────────────────────────────────────────────────────
+
+LINE-BY-LINE EXPLANATION:
+─────────────────────────
+
+Line 9: public void Configure(EntityTypeBuilder<Product> builder)
+WHY: IEntityTypeConfiguration<T> pattern
+BENEFIT: Separates configuration from DbContext
+ALTERNATIVE: Configure in OnModelCreating() - gets messy
+
+Line 12: builder.HasKey(p => p.Id);
+WHY: Defines primary key
+WHAT: Creates PRIMARY KEY constraint
+SQL: PRIMARY KEY (Id)
+NOTE: By convention, property named "Id" is auto-detected
+
+Line 15-17: Property configuration for Name
+IsRequired(): NOT NULL constraint
+HasMaxLength(150): nvarchar(150) instead of nvarchar(max)
+WHY MaxLength: Performance (indexing, storage)
+SQL: Name nvarchar(150) NOT NULL
+
+Line 19-21: Property configuration for SKU
+Same as Name but MaxLength(100)
+CRITICAL: SKU is business identifier
+
+Line 24-26: Unique index on SKU
+IsUnique(): UNIQUE constraint
+HasDatabaseName(): Custom index name
+WHY: Prevent duplicate SKUs at database level
+SQL: CREATE UNIQUE INDEX IX_Products_SKU ON Products(SKU)
+
+Line 28-29: Composite index on Name and SKU
+WHY: Optimizes search queries
+USE CASE: WHERE Name LIKE '%laptop%' OR SKU LIKE '%laptop%'
+SQL: CREATE INDEX IX_Product_Search ON Products(Name, SKU)
+BENEFIT: Faster product search
+
+Line 32-33: Concurrency token
+IsRowVersion(): SQL Server rowversion type
+WHAT: Auto-increments on every UPDATE
+WHY: Optimistic concurrency control
+PREVENTS: Lost updates in concurrent scenarios
+SQL: RowVersion rowversion
+
+Line 36-39: Product → Category relationship
+HasOne().WithMany(): Many-to-One
+HasForeignKey(): Specifies FK column
+OnDelete(Cascade): Delete category → delete products
+SQL: FOREIGN KEY (CategoryId) REFERENCES Categories(Id) ON DELETE CASCADE
+
+Line 41-44: Product → Brand relationship
+WithMany(): No navigation property in Brand
+OnDelete(SetNull): Delete brand → set BrandId to NULL
+WHY SetNull: Products can exist without brand
+SQL: ON DELETE SET NULL
+
+Line 46-49: Product → Status relationship
+OnDelete(Restrict): Cannot delete status if products use it
+WHY Restrict: Protect referential integrity
+MUST: Delete/update products before deleting status
+
+4.2 CATEGORY CONFIGURATION
+──────────────────────────
+
+FILE: Ecom.Catalog.Infrastructure/Persistence/Configurations/CategoryConfiguration.cs
+
+COMPLETE CODE:
+────────────────────────────────────────────────────────────────────
+using Ecom.Catalog.Domain.Entities;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
+
+namespace Ecom.Catalog.Infrastructure.Persistence.Configurations;
+
+public class CategoryConfiguration : IEntityTypeConfiguration<Category>
+{
+    public void Configure(EntityTypeBuilder<Category> builder)
+    {
+        builder.HasKey(c => c.Id);
+        
+        builder.Property(c => c.Name)
+               .IsRequired()
+               .HasMaxLength(100);
+        
+        builder.Property(c => c.RowVersion)
+               .IsRowVersion();
+        
+        // Self-referencing relationship
+        builder.HasOne(c => c.ParentCategory)
+               .WithMany(c => c.SubCategories)
+               .HasForeignKey(c => c.ParentCategoryId)
+               .OnDelete(DeleteBehavior.Restrict);
+    }
+}
+────────────────────────────────────────────────────────────────────
+
+KEY POINTS:
+───────────
+
+Line 21-24: Self-referencing relationship
+HasOne(c => c.ParentCategory): Points to parent
+WithMany(c => c.SubCategories): Parent has many children
+HasForeignKey(c => c.ParentCategoryId): FK to same table
+OnDelete(Restrict): CRITICAL - prevents cascade deletion of tree
+
+WHY RESTRICT DELETE:
+────────────────────
+
+WITHOUT RESTRICT (Cascade):
+Delete "Electronics" → Deletes "Laptops" → Deletes "Gaming Laptops"
+PROBLEM: Entire tree deleted accidentally
+
+WITH RESTRICT:
+Delete "Electronics" → ERROR: "Cannot delete, has children"
+SOLUTION: Must explicitly handle subcategories first
+
+SQL:
+ALTER TABLE Categories
+ADD CONSTRAINT FK_Categories_Categories_ParentCategoryId
+FOREIGN KEY (ParentCategoryId) REFERENCES Categories(Id)
+ON DELETE NO ACTION;  -- Restrict
+
+4.3 MEDIA ASSET CONFIGURATION
+──────────────────────────────
+
+FILE: Ecom.Catalog.Infrastructure/Persistence/Configurations/MediaAssetConfiguration.cs
+
+COMPLETE CODE:
+────────────────────────────────────────────────────────────────────
+using Ecom.Catalog.Domain.Entities;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
+
+namespace Ecom.Catalog.Infrastructure.Persistence.Configurations;
+
+public class MediaAssetConfiguration : IEntityTypeConfiguration<MediaAsset>
+{
+    public void Configure(EntityTypeBuilder<MediaAsset> builder)
+    {
+        builder.HasKey(m => m.Id);
+        
+        builder.Property(m => m.FileUrl)
+               .IsRequired()
+               .HasMaxLength(500);
+        
+        builder.Property(m => m.FileType)
+               .HasMaxLength(50);
+        
+        builder.Property(m => m.AltText)
+               .HasMaxLength(255);
+        
+        builder.Property(m => m.RowVersion)
+               .IsRowVersion();
+        
+        builder.HasOne(m => m.Product)
+               .WithMany(p => p.MediaAssets)
+               .HasForeignKey(m => m.ProductId)
+               .OnDelete(DeleteBehavior.Cascade);
+    }
+}
+────────────────────────────────────────────────────────────────────
+
+KEY POINTS:
+───────────
+
+Line 13-15: FileUrl constraint
+MaxLength(500): Accommodate long URLs
+Example: "https://cdn.example.com/products/iphone-15-pro-max-256gb-black-front.jpg"
+
+Line 17-18: FileType (optional)
+MaxLength(50): MIME types (image/jpeg, image/png, image/webp)
+NOT Required: Can be inferred from URL extension
+
+Line 20-21: AltText (optional)
+MaxLength(255): Accessibility text
+WHY: WCAG compliance, SEO benefit
+
+Line 26-29: Cascade delete
+OnDelete(Cascade): Delete product → delete images
+WHY: Images are meaningless without product
+CLEANUP: Application should also delete files from storage (S3, Azure Blob)
+
+4.4 PRODUCT READ MODEL CONFIGURATION
+─────────────────────────────────────
+
+FILE: Ecom.Catalog.Infrastructure/Persistence/Configurations/ProductReadModelConfiguration.cs
+
+COMPLETE CODE:
+────────────────────────────────────────────────────────────────────
+using Ecom.Catalog.Domain.Entities;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
+
+namespace Ecom.Catalog.Infrastructure.Persistence.Configurations;
+
+public class ProductReadModelConfiguration : IEntityTypeConfiguration<ProductReadModel>
+{
+    public void Configure(EntityTypeBuilder<ProductReadModel> builder)
+    {
+        builder.HasKey(p => p.Id);
+        
+        builder.Property(p => p.ProductName)
+               .IsRequired()
+               .HasMaxLength(150);
+        
+        builder.Property(p => p.CategoryName)
+               .IsRequired()
+               .HasMaxLength(100);
+        
+        builder.Property(p => p.Price)
+               .HasPrecision(18, 2);
+        
+        builder.Property(p => p.Status)
+               .IsRequired()
+               .HasMaxLength(50);
+    }
+}
+────────────────────────────────────────────────────────────────────
+
+KEY POINTS:
+───────────
+
+Line 21-22: Decimal precision
+HasPrecision(18, 2): decimal(18,2)
+MEANING: 18 total digits, 2 after decimal point
+RANGE: -999,999,999,999,999.99 to 999,999,999,999,999.99
+WHY: Prevents rounding errors in financial calculations
+
+EXAMPLE:
+Price = 1099.99 ✓
+Price = 1099.999 → Rounded to 1099.99
+Price = 10000000000000000.00 ✓ (16 digits before decimal)
+
+NO RELATIONSHIPS:
+─────────────────
+ProductReadModel is DENORMALIZED
+No foreign keys, no navigation properties
+Updated asynchronously via events
+
+4.5 AUDIT LOG CONFIGURATION
+────────────────────────────
+
+FILE: Ecom.Catalog.Infrastructure/Persistence/Configurations/AuditLogConfiguration.cs
+
+COMPLETE CODE:
+────────────────────────────────────────────────────────────────────
+using Ecom.Catalog.Domain.Entities;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
+
+namespace Ecom.Catalog.Infrastructure.Persistence.Configurations;
+
+public class AuditLogConfiguration : IEntityTypeConfiguration<AuditLog>
+{
+    public void Configure(EntityTypeBuilder<AuditLog> builder)
+    {
+        builder.HasKey(a => a.Id);
+        
+        builder.Property(a => a.EntityName)
+               .IsRequired()
+               .HasMaxLength(100);
+        
+        builder.Property(a => a.Action)
+               .IsRequired()
+               .HasMaxLength(50);
+        
+        builder.Property(a => a.UserEmail)
+               .IsRequired()
+               .HasMaxLength(256);
+        
+        builder.Property(a => a.IpAddress)
+               .HasMaxLength(45);  // IPv6 support
+        
+        // Performance indexes
+        builder.HasIndex(a => new { a.EntityName, a.EntityId })
+               .HasDatabaseName("IX_AuditLogs_Entity");
+        
+        builder.HasIndex(a => a.Timestamp)
+               .HasDatabaseName("IX_AuditLogs_Timestamp");
+    }
+}
+────────────────────────────────────────────────────────────────────
+
+KEY POINTS:
+───────────
+
+Line 25: IpAddress MaxLength(45)
+WHY 45: IPv6 addresses can be up to 45 characters
+IPv4: "192.168.1.1" (15 chars)
+IPv6: "2001:0db8:85a3:0000:0000:8a2e:0370:7334" (39 chars)
+
+Line 29-30: Composite index on EntityName and EntityId
+WHY: Common query pattern
+QUERY: "Show all changes to Product #123"
+SQL: WHERE EntityName = 'Product' AND EntityId = 123
+BENEFIT: Fast lookups for entity history
+
+Line 32-33: Index on Timestamp
+WHY: Time-based queries
+QUERY: "Show all changes in last 24 hours"
+SQL: WHERE Timestamp >= DATEADD(day, -1, GETDATE())
+BENEFIT: Fast time-range queries
+
+═══════════════════════════════════════════════════════════════════════════════
+5. DBCONTEXT IMPLEMENTATION
+═══════════════════════════════════════════════════════════════════════════════
+
+FILE: Ecom.Catalog.Infrastructure/Persistence/CatalogDbContext.cs
+
+COMPLETE CODE:
+────────────────────────────────────────────────────────────────────
+using Ecom.Catalog.Domain.Entities;
+using Microsoft.EntityFrameworkCore;
+
+namespace Ecom.Catalog.Infrastructure.Persistence;
+
+public class CatalogDbContext : DbContext
+{
+    public CatalogDbContext(DbContextOptions<CatalogDbContext> options) 
+        : base(options) 
+    { }
+
+    // DbSets - Represent database tables
+    public DbSet<Product> Products => Set<Product>();
+    public DbSet<Category> Categories => Set<Category>();
+    public DbSet<Brand> Brands => Set<Brand>();
+    public DbSet<ProductStatus> ProductStatuses => Set<ProductStatus>();
+    public DbSet<ProductVariantCombination> ProductVariants => Set<ProductVariantCombination>();
+    public DbSet<MediaAsset> MediaAssets => Set<MediaAsset>();
+    public DbSet<ProductReadModel> ProductReadModels => Set<ProductReadModel>();
+    public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        // Apply all IEntityTypeConfiguration classes from assembly
+        modelBuilder.ApplyConfigurationsFromAssembly(typeof(CatalogDbContext).Assembly);
+    }
+}
+────────────────────────────────────────────────────────────────────
+
+LINE-BY-LINE EXPLANATION:
+─────────────────────────
+
+Line 6: public class CatalogDbContext : DbContext
+WHY: Inherits from EF Core DbContext
+WHAT: Represents a session with the database
+RESPONSIBILITY: Querying and saving data
+
+Line 8-10: Constructor with DbContextOptions
+WHY: Dependency injection pattern
+CONFIGURED IN: Program.cs
+EXAMPLE:
+```csharp
+builder.Services.AddDbContext<CatalogDbContext>(options =>
+    options.UseSqlServer(connectionString));
+```
+
+Line 13-20: DbSet Properties
+WHAT: Each DbSet<T> represents a table
+MODERN SYNTAX: => Set<Product>() (expression-bodied property)
+OLD SYNTAX: { get; set; } = null!;
+
+WHY DbSets:
+- Enable LINQ queries: _context.Products.Where(p => !p.IsDeleted)
+- Track changes: EF Core knows what to INSERT/UPDATE/DELETE
+- Represent tables: Products table, Categories table, etc.
+
+EXAMPLE USAGE:
+```csharp
+// Query
+var products = await _context.Products
+    .Include(p => p.Category)
+    .Where(p => !p.IsDeleted)
+    .ToListAsync();
+
+// Add
+_context.Products.Add(newProduct);
+await _context.SaveChangesAsync();
+
+// Update
+product.Name = "New Name";
+await _context.SaveChangesAsync();  // EF Core detects change
+
+// Delete
+_context.Products.Remove(product);
+await _context.SaveChangesAsync();
+```
+
+Line 22-26: OnModelCreating method
+WHY: Configure entity mappings
+WHEN CALLED: Once when DbContext is first created
+
+Line 25: ApplyConfigurationsFromAssembly
+WHAT: Scans assembly for IEntityTypeConfiguration<T> classes
+FINDS: ProductConfiguration, CategoryConfiguration, etc.
+APPLIES: All configurations automatically
+
+WHY THIS APPROACH:
+✓ Clean separation (configurations in separate files)
+✓ No manual registration needed
+✓ Follows Single Responsibility Principle
+✓ Easy to maintain
+
+ALTERNATIVE (Manual):
+```csharp
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    modelBuilder.ApplyConfiguration(new ProductConfiguration());
+    modelBuilder.ApplyConfiguration(new CategoryConfiguration());
+    // ... repeat for every entity (tedious!)
+}
+```
+
+DBCONTEXT LIFECYCLE:
+────────────────────
+
+1. REQUEST ARRIVES
+   ↓
+2. DI Container creates CatalogDbContext (Scoped)
+   ↓
+3. Constructor called with DbContextOptions
+   ↓
+4. OnModelCreating() called (first time only)
+   ↓
+5. Configurations applied
+   ↓
+6. DbContext ready for use
+   ↓
+7. Repository uses DbContext for queries
+   ↓
+8. SaveChangesAsync() commits to database
+   ↓
+9. Request completes
+   ↓
+10. DbContext disposed (Scoped lifetime)
+
+CONFIGURATION IN PROGRAM.CS:
+────────────────────────────
+
+```csharp
+// Register DbContext
+builder.Services.AddDbContext<CatalogDbContext>(options =>
+    options.UseSqlServer(
+        builder.Configuration.GetConnectionString("CatalogDb"),
+        sqlOptions =>
+        {
+            sqlOptions.EnableRetryOnFailure(
+                maxRetryCount: 3,
+                maxRetryDelay: TimeSpan.FromSeconds(5),
+                errorNumbersToAdd: null);
+        }));
+```
+
+CONNECTION STRING (appsettings.json):
+─────────────────────────────────────
+
+```json
+{
+  "ConnectionStrings": {
+    "CatalogDb": "Server=localhost;Database=EcomCatalogDb;Trusted_Connection=true;TrustServerCertificate=true"
+  }
+}
+```
+
+═══════════════════════════════════════════════════════════════════════════════
+6. MIGRATIONS & DATABASE GENERATION
+═══════════════════════════════════════════════════════════════════════════════
+
+6.1 CREATING MIGRATIONS
+───────────────────────
+
+WHAT ARE MIGRATIONS?
+────────────────────
+Migrations are version control for your database schema.
+Each migration represents a set of changes to the database structure.
+
+WHEN TO CREATE MIGRATIONS:
+──────────────────────────
+• After adding/modifying entities
+• After changing Fluent API configurations
+• After adding/removing properties
+• Before deploying to production
+
+COMMANDS:
+─────────
+
+PACKAGE MANAGER CONSOLE (Visual Studio):
+```powershell
+Add-Migration InitialCreate -Project Ecom.Catalog.Infrastructure -StartupProject Ecom.Catalog.API
+Update-Database -Project Ecom.Catalog.Infrastructure -StartupProject Ecom.Catalog.API
+```
+
+.NET CLI (Command Line):
+```bash
+dotnet ef migrations add InitialCreate --project Ecom.Catalog.Infrastructure --startup-project Ecom.Catalog.API
+dotnet ef database update --project Ecom.Catalog.Infrastructure --startup-project Ecom.Catalog.API
+```
+
+PARAMETERS EXPLAINED:
+─────────────────────
+--project: Where migrations are stored (Infrastructure layer)
+--startup-project: Where DbContext configuration is (API layer with Program.cs)
+
+6.2 MIGRATION FILE STRUCTURE
+────────────────────────────
+
+FILE: Ecom.Catalog.Infrastructure/Migrations/20260408071506_InitialCreate.cs
+
+GENERATED CODE (EXCERPT):
+────────────────────────────────────────────────────────────────────
+public partial class InitialCreate : Migration
+{
+    protected override void Up(MigrationBuilder migrationBuilder)
+    {
+        migrationBuilder.CreateTable(
+            name: "Products",
+            columns: table => new
+            {
+                Id = table.Column<int>(type: "int", nullable: false)
+                    .Annotation("SqlServer:Identity", "1, 1"),
+                Name = table.Column<string>(type: "nvarchar(150)", maxLength: 150, nullable: false),
+                SKU = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false),
+                CategoryId = table.Column<int>(type: "int", nullable: false),
+                BrandId = table.Column<int>(type: "int", nullable: true),
+                StatusId = table.Column<int>(type: "int", nullable: false),
+                CreatedBy = table.Column<int>(type: "int", nullable: false),
+                IsDeleted = table.Column<bool>(type: "bit", nullable: false),
+                CreatedAt = table.Column<DateTime>(type: "datetime2", nullable: false),
+                UpdatedAt = table.Column<DateTime>(type: "datetime2", nullable: true),
+                RowVersion = table.Column<byte[]>(type: "rowversion", rowVersion: true, nullable: true)
+            },
+            constraints: table =>
+            {
+                table.PrimaryKey("PK_Products", x => x.Id);
+                table.ForeignKey(
+                    name: "FK_Products_Categories_CategoryId",
+                    column: x => x.CategoryId,
+                    principalTable: "Categories",
+                    principalColumn: "Id",
+                    onDelete: ReferentialAction.Cascade);
+                table.ForeignKey(
+                    name: "FK_Products_Brands_BrandId",
+                    column: x => x.BrandId,
+                    principalTable: "Brands",
+                    principalColumn: "Id",
+                    onDelete: ReferentialAction.SetNull);
+            });
+
+        migrationBuilder.CreateIndex(
+            name: "IX_Products_SKU",
+            table: "Products",
+            column: "SKU",
+            unique: true);
+
+        migrationBuilder.CreateIndex(
+            name: "IX_Product_Search",
+            table: "Products",
+            columns: new[] { "Name", "SKU" });
+    }
+
+    protected override void Down(MigrationBuilder migrationBuilder)
+    {
+        migrationBuilder.DropTable(name: "Products");
+    }
+}
+────────────────────────────────────────────────────────────────────
+
+EXPLANATION:
+────────────
+
+Up() Method:
+• Applies changes to database (forward migration)
+• Creates tables, columns, indexes, foreign keys
+• Executed when running Update-Database
+
+Down() Method:
+• Reverts changes (rollback migration)
+• Drops tables, removes columns
+• Executed when rolling back
+
+6.3 APPLYING MIGRATIONS
+───────────────────────
+
+DEVELOPMENT ENVIRONMENT:
+────────────────────────
+```powershell
+Update-Database
+```
+This directly updates your local database.
+
+PRODUCTION ENVIRONMENT (RECOMMENDED):
+──────────────────────────────────────
+```bash
+# Generate SQL script
+dotnet ef migrations script --project Ecom.Catalog.Infrastructure --output migration.sql
+
+# Review script with DBA
+# Apply via SQL Server Management Studio or deployment pipeline
+```
+
+WHY SQL SCRIPTS IN PRODUCTION?
+───────────────────────────────
+✓ DBA review and approval
+✓ Scheduled maintenance windows
+✓ Rollback planning
+✓ Audit trail
+✓ No direct database access from application
+
+6.4 COMMON MIGRATION COMMANDS
+─────────────────────────────
+
+```bash
+# List all migrations
+dotnet ef migrations list
+
+# Remove last migration (if not applied to database)
+dotnet ef migrations remove
+
+# Update to specific migration
+dotnet ef database update 20260408071506_InitialCreate
+
+# Rollback all migrations
+dotnet ef database update 0
+
+# Generate idempotent script (safe to run multiple times)
+dotnet ef migrations script --idempotent
+
+# Generate script for specific migration range
+dotnet ef migrations script FromMigration ToMigration
+```
+
+6.5 DATABASE CREATION PROCESS
+─────────────────────────────
+
+STEP-BY-STEP FLOW:
+──────────────────
+
+1. DESIGN ENTITIES
+   └─ Create Product.cs, Category.cs, etc. in Domain layer
+
+2. CREATE CONFIGURATIONS
+   └─ Create ProductConfiguration.cs in Infrastructure layer
+
+3. REGISTER DBCONTEXT
+   └─ Add to Program.cs: AddDbContext<CatalogDbContext>()
+
+4. CREATE MIGRATION
+   └─ Run: Add-Migration InitialCreate
+   └─ EF Core generates migration file
+
+5. REVIEW MIGRATION
+   └─ Check generated Up() and Down() methods
+   └─ Verify table structures, indexes, foreign keys
+
+6. APPLY MIGRATION
+   └─ Run: Update-Database
+   └─ Database created with all tables
+
+7. VERIFY DATABASE
+   └─ Open SQL Server Management Studio
+   └─ Check tables, columns, indexes, constraints
+
+WHAT HAPPENS DURING UPDATE-DATABASE:
+────────────────────────────────────
+
+1. EF Core connects to database
+2. Checks __EFMigrationsHistory table
+3. Identifies unapplied migrations
+4. Executes Up() method for each migration
+5. Records migration in __EFMigrationsHistory
+6. Database is now up-to-date
+
+__EFMigrationsHistory TABLE:
+────────────────────────────
+┌──────────────────────────────┬────────────────────┐
+│ MigrationId                  │ ProductVersion     │
+├──────────────────────────────┼────────────────────┤
+│ 20260408071506_InitialCreate │ 8.0.0              │
+└──────────────────────────────┴────────────────────┘
+
+This table tracks which migrations have been applied.
+
+═══════════════════════════════════════════════════════════════════════════════
+7. DATABASE SCHEMA VISUALIZATION (ER DIAGRAM)
+═══════════════════════════════════════════════════════════════════════════════
+
+7.1 COMPLETE ER DIAGRAM
+───────────────────────
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         ECOM CATALOG DATABASE SCHEMA                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+                              ┌──────────────────────┐
+                              │   ProductStatuses    │
+                              ├──────────────────────┤
+                              │ PK  Id (int)         │
+                              │     StatusName       │
+                              └──────────┬───────────┘
+                                         │
+                                         │ 1:N
+                                         │
+        ┌──────────────────────┐         │         ┌──────────────────────┐
+        │       Brands         │         │         │     Categories       │
+        ├──────────────────────┤         │         ├──────────────────────┤
+        │ PK  Id (int)         │         │         │ PK  Id (int)         │
+        │     Name (100)       │         │         │     Name (100)       │
+        │     IsDeleted        │         │         │ FK  ParentCategoryId │──┐
+        │     CreatedAt        │         │         │     IsDeleted        │  │
+        │     UpdatedAt        │         │         │     CreatedAt        │  │
+        │     RowVersion       │         │         │     UpdatedAt        │  │
+        └──────────┬───────────┘         │         │     RowVersion       │  │
+                   │                     │         └──────────┬───────────┘  │
+                   │ 1:N                 │                    │              │
+                   │                     │                    │ 1:N          │
+                   │                     │                    │              │
+                   │         ┌───────────┴────────────────────┴───┐          │
+                   │         │                                    │          │
+                   └─────────┤          Products                  │◄─────────┘
+                             ├────────────────────────────────────┤  Self-Ref
+                             │ PK  Id (int) IDENTITY              │  1:N
+                             │     Name (150) NOT NULL            │
+                             │ UK  SKU (100) NOT NULL UNIQUE      │
+                             │ FK  CategoryId NOT NULL            │
+                             │ FK  BrandId NULL                   │
+                             │ FK  StatusId NOT NULL              │
+                             │     CreatedBy (int)                │
+                             │     IsDeleted (bit)                │
+                             │     CreatedAt (datetime2)          │
+                             │     UpdatedAt (datetime2) NULL     │
+                             │     RowVersion (rowversion)        │
+                             │                                    │
+                             │ IX: IX_Products_SKU (UNIQUE)       │
+                             │ IX: IX_Product_Search (Name, SKU)  │
+                             └──────────┬─────────────────────────┘
+                                        │
+                                        │ 1:N
+                          ┌─────────────┴─────────────┐
+                          │                           │
+                          │                           │
+              ┌───────────┴──────────┐    ┌──────────┴────────────────┐
+              │ ProductVariant       │    │      MediaAssets          │
+              │ Combinations         │    ├───────────────────────────┤
+              ├──────────────────────┤    │ PK  Id (int)              │
+              │ PK  Id (int)         │    │ FK  ProductId NOT NULL    │
+              │ FK  ProductId        │    │     FileUrl (500)         │
+              │     SKU (100)        │    │     FileType (50)         │
+              │     CreatedAt        │    │     IsPrimary (bit)       │
+              │     UpdatedAt        │    │     SortOrder (int)       │
+              │     RowVersion       │    │     AltText (255)         │
+              └──────────────────────┘    │     IsDeleted (bit)       │
+                                          │     CreatedAt             │
+                                          │     UpdatedAt             │
+                                          │     RowVersion            │
+                                          │                           │
+                                          │ IX: IX_MediaAssets_       │
+                                          │     ProductId             │
+                                          └───────────────────────────┘
+
+SEPARATE TABLES (No FK relationships):
+
+┌──────────────────────────────┐       ┌──────────────────────────────┐
+│    ProductReadModels         │       │        AuditLogs             │
+│  (CQRS - Denormalized)       │       │    (Audit Trail)             │
+├──────────────────────────────┤       ├──────────────────────────────┤
+│ PK  Id (int)                 │       │ PK  Id (int)                 │
+│     ProductName (150)        │       │     EntityName (100)         │
+│     CategoryName (100)       │       │     EntityId (int)           │
+│     Price (decimal 18,2)     │       │     Action (50)              │
+│     Stock (int)              │       │     Changes (nvarchar(max))  │
+│     Status (50)              │       │     UserId (int)             │
+│     UpdatedAt                │       │     UserEmail (256)          │
+│                              │       │     Timestamp (datetime2)    │
+│ Updated via Events           │       │     IpAddress (45)           │
+└──────────────────────────────┘       │                              │
+                                       │ IX: IX_AuditLogs_Entity      │
+                                       │     (EntityName, EntityId)   │
+                                       │ IX: IX_AuditLogs_Timestamp   │
+                                       └──────────────────────────────┘
+
+7.2 TABLE SUMMARY
+─────────────────
+
+┌────────────────────────┬──────────┬─────────────────────────────────┐
+│ Table                  │ Rows Est │ Purpose                         │
+├────────────────────────┼──────────┼─────────────────────────────────┤
+│ Products               │ 100K+    │ Main product catalog            │
+│ Categories             │ 500      │ Hierarchical categories         │
+│ Brands                 │ 1K       │ Product brands                  │
+│ ProductStatuses        │ 10       │ Lifecycle states (lookup)       │
+│ ProductVariants        │ 500K+    │ Product variations (SKUs)       │
+│ MediaAssets            │ 500K+    │ Product images                  │
+│ ProductReadModels      │ 100K+    │ CQRS read model (denormalized)  │
+│ AuditLogs              │ 10M+     │ Complete change history         │
+└────────────────────────┴──────────┴─────────────────────────────────┘
+
+7.3 FOREIGN KEY SUMMARY
+───────────────────────
+
+┌─────────────────────────────────────┬──────────────┬─────────────────┐
+│ Foreign Key                         │ Delete Rule  │ Reason          │
+├─────────────────────────────────────┼──────────────┼─────────────────┤
+│ Products.CategoryId → Categories.Id │ CASCADE      │ Delete category │
+│                                     │              │ → delete prods  │
+├─────────────────────────────────────┼──────────────┼─────────────────┤
+│ Products.BrandId → Brands.Id        │ SET NULL     │ Delete brand    │
+│                                     │              │ → keep products │
+├─────────────────────────────────────┼──────────────┼─────────────────┤
+│ Products.StatusId → ProductStatus.Id│ RESTRICT     │ Cannot delete   │
+│                                     │              │ status in use   │
+├─────────────────────────────────────┼──────────────┼─────────────────┤
+│ ProductVariants.ProductId →         │ CASCADE      │ Delete product  │
+│ Products.Id                         │              │ → delete vars   │
+├─────────────────────────────────────┼──────────────┼─────────────────┤
+│ MediaAssets.ProductId → Products.Id │ CASCADE      │ Delete product  │
+│                                     │              │ → delete images │
+├─────────────────────────────────────┼──────────────┼─────────────────┤
+│ Categories.ParentCategoryId →       │ RESTRICT     │ Prevent cascade │
+│ Categories.Id                       │              │ delete of tree  │
+└─────────────────────────────────────┴──────────────┴─────────────────┘
+
+7.4 INDEX SUMMARY
+─────────────────
+
+┌────────────────────────────────┬──────────┬─────────────────────────┐
+│ Index Name                     │ Type     │ Purpose                 │
+├────────────────────────────────┼──────────┼─────────────────────────┤
+│ PK_Products                    │ Clustered│ Primary key             │
+│ IX_Products_SKU                │ Unique   │ Enforce SKU uniqueness  │
+│ IX_Product_Search              │ Non-Clust│ Search by Name/SKU      │
+│ IX_Products_CategoryId         │ Non-Clust│ FK index (auto-created) │
+│ IX_Products_BrandId            │ Non-Clust│ FK index (auto-created) │
+│ IX_Products_StatusId           │ Non-Clust│ FK index (auto-created) │
+├────────────────────────────────┼──────────┼─────────────────────────┤
+│ IX_Categories_ParentCategoryId │ Non-Clust│ FK index (hierarchy)    │
+├────────────────────────────────┼──────────┼─────────────────────────┤
+│ IX_MediaAssets_ProductId       │ Non-Clust│ FK index                │
+├────────────────────────────────┼──────────┼─────────────────────────┤
+│ IX_ProductVariants_ProductId   │ Non-Clust│ FK index                │
+├────────────────────────────────┼──────────┼─────────────────────────┤
+│ IX_AuditLogs_Entity            │ Non-Clust│ Query by entity         │
+│ IX_AuditLogs_Timestamp         │ Non-Clust│ Time-based queries      │
+└────────────────────────────────┴──────────┴─────────────────────────┘
+
+═══════════════════════════════════════════════════════════════════════════════
+8. OPTIMIZATION & BEST PRACTICES
+═══════════════════════════════════════════════════════════════════════════════
+
+8.1 INDEXING STRATEGY
+─────────────────────
+
+INDEXES IMPLEMENTED:
+────────────────────
+
+1. UNIQUE INDEX ON SKU
+   ```sql
+   CREATE UNIQUE INDEX IX_Products_SKU ON Products(SKU);
+   ```
+   WHY: Enforce business rule (SKU must be unique)
+   BENEFIT: Fast lookups by SKU
+   QUERY: WHERE SKU = 'IPHONE-15-PRO'
+
+2. COMPOSITE INDEX ON NAME AND SKU
+   ```sql
+   CREATE INDEX IX_Product_Search ON Products(Name, SKU);
+   ```
+   WHY: Optimize search queries
+   BENEFIT: Covers both Name and SKU searches
+   QUERY: WHERE Name LIKE '%laptop%' OR SKU LIKE '%laptop%'
+
+3. FOREIGN KEY INDEXES (Auto-created by EF Core)
+   ```sql
+   CREATE INDEX IX_Products_CategoryId ON Products(CategoryId);
+   CREATE INDEX IX_Products_BrandId ON Products(BrandId);
+   CREATE INDEX IX_Products_StatusId ON Products(StatusId);
+   ```
+   WHY: Optimize JOIN operations
+   BENEFIT: Fast lookups when joining tables
+
+4. COMPOSITE INDEX ON AUDITLOGS
+   ```sql
+   CREATE INDEX IX_AuditLogs_Entity ON AuditLogs(EntityName, EntityId);
+   ```
+   WHY: Common query pattern (entity history)
+   BENEFIT: Fast retrieval of all changes to specific entity
+
+5. TIMESTAMP INDEX ON AUDITLOGS
+   ```sql
+   CREATE INDEX IX_AuditLogs_Timestamp ON AuditLogs(Timestamp);
+   ```
+   WHY: Time-based queries (last 24 hours, last week)
+   BENEFIT: Fast time-range filtering
+
+ADDITIONAL INDEXES TO CONSIDER:
+────────────────────────────────
+
+```sql
+-- If filtering by IsDeleted frequently
+CREATE INDEX IX_Products_IsDeleted ON Products(IsDeleted) WHERE IsDeleted = 0;
+
+-- If filtering by CreatedAt frequently
+CREATE INDEX IX_Products_CreatedAt ON Products(CreatedAt DESC);
+
+-- If filtering by Status frequently
+CREATE INDEX IX_Products_StatusId_IsDeleted ON Products(StatusId, IsDeleted);
+
+-- Covering index for product list queries
+CREATE INDEX IX_Products_Covering 
+ON Products(CategoryId, IsDeleted) 
+INCLUDE (Name, SKU, CreatedAt);
+```
+
+8.2 AVOIDING N+1 QUERIES
+────────────────────────
+
+PROBLEM: N+1 QUERY
+──────────────────
+
+BAD CODE (N+1):
+```csharp
+var products = await _context.Products.ToListAsync();  // 1 query
+
+foreach (var product in products)
+{
+    var categoryName = product.Category.Name;  // N queries (one per product!)
+}
+```
+
+RESULT: 1 + N queries (1 for products, N for categories)
+If 100 products → 101 database queries!
+
+SOLUTION: EAGER LOADING
+────────────────────────
+
+GOOD CODE (Include):
+```csharp
+var products = await _context.Products
+    .Include(p => p.Category)      // Eager load Category
+    .Include(p => p.Brand)         // Eager load Brand
+    .Include(p => p.Status)        // Eager load Status
+    .ToListAsync();                // 1 query with JOINs
+
+foreach (var product in products)
+{
+    var categoryName = product.Category.Name;  // No additional query!
+}
+```
+
+RESULT: 1 query with JOINs
+SQL GENERATED:
+```sql
+SELECT p.*, c.*, b.*, s.*
+FROM Products p
+LEFT JOIN Categories c ON p.CategoryId = c.Id
+LEFT JOIN Brands b ON p.BrandId = b.Id
+LEFT JOIN ProductStatuses s ON p.StatusId = s.Id
+```
+
+MULTIPLE LEVELS:
+────────────────
+
+```csharp
+var products = await _context.Products
+    .Include(p => p.Category)
+        .ThenInclude(c => c.ParentCategory)  // Load parent category too
+    .Include(p => p.MediaAssets)             // Load all images
+    .ToListAsync();
+```
+
+8.3 LAZY VS EAGER LOADING
+──────────────────────────
+
+LAZY LOADING (NOT RECOMMENDED):
+────────────────────────────────
+
+```csharp
+// Enable lazy loading (not used in this project)
+builder.Services.AddDbContext<CatalogDbContext>(options =>
+    options.UseSqlServer(connectionString)
+           .UseLazyLoadingProxies());  // DON'T DO THIS
+
+// Usage
+var product = await _context.Products.FirstAsync();
+var categoryName = product.Category.Name;  // Triggers separate query
+```
+
+PROBLEMS:
+- Hidden database queries
+- N+1 query issues
+- Performance unpredictable
+- Hard to debug
+
+EAGER LOADING (RECOMMENDED):
+─────────────────────────────
+
+```csharp
+// Explicit Include() - clear what's loaded
+var product = await _context.Products
+    .Include(p => p.Category)
+    .FirstAsync();
+
+var categoryName = product.Category.Name;  // No query, already loaded
+```
+
+BENEFITS:
+✓ Explicit and clear
+✓ Predictable performance
+✓ Easy to optimize
+✓ No hidden queries
+
+EXPLICIT LOADING (WHEN NEEDED):
+────────────────────────────────
+
+```csharp
+var product = await _context.Products.FirstAsync();
+
+// Load related data explicitly when needed
+await _context.Entry(product)
+    .Collection(p => p.MediaAssets)
+    .LoadAsync();
+```
+
+USE CASE: Load related data conditionally
+
+8.4 QUERY OPTIMIZATION
+──────────────────────
+
+PROJECTION (SELECT ONLY NEEDED COLUMNS):
+─────────────────────────────────────────
+
+BAD (Loads entire entity):
+```csharp
+var products = await _context.Products
+    .Include(p => p.Category)
+    .ToListAsync();  // Loads all columns
+```
+
+GOOD (Select only needed columns):
+```csharp
+var products = await _context.Products
+    .Select(p => new ProductDto
+    {
+        Id = p.Id,
+        Name = p.Name,
+        SKU = p.SKU,
+        CategoryName = p.Category.Name  // No Include needed!
+    })
+    .ToListAsync();
+```
+
+BENEFITS:
+✓ Less data transferred
+✓ Faster queries
+✓ No tracking overhead
+
+ASNOT RACKING (READ-ONLY QUERIES):
+───────────────────────────────────
+
+```csharp
+var products = await _context.Products
+    .AsNoTracking()  // Don't track changes
+    .ToListAsync();
+```
+
+USE WHEN:
+- Read-only queries
+- No updates needed
+- Performance critical
+
+BENEFITS:
+✓ Faster queries (no change tracking overhead)
+✓ Less memory usage
+
+PAGINATION:
+───────────
+
+```csharp
+var products = await _context.Products
+    .OrderBy(p => p.Id)
+    .Skip((page - 1) * pageSize)
+    .Take(pageSize)
+    .ToListAsync();
+```
+
+ALWAYS:
+- Use Skip/Take for large result sets
+- Order before Skip (required by SQL Server)
+- Consider cursor-based pagination for very large datasets
+
+8.5 NORMALIZATION
+─────────────────
+
+CURRENT DESIGN: 3NF (Third Normal Form)
+────────────────────────────────────────
+
+NORMALIZED TABLES:
+- Products (main data)
+- Categories (separate table)
+- Brands (separate table)
+- ProductStatuses (separate table)
+
+BENEFITS:
+✓ No data duplication
+✓ Easy to update (change brand name once)
+✓ Data integrity
+
+DENORMALIZED TABLE:
+- ProductReadModels (CQRS)
+
+BENEFITS:
+✓ Fast queries (no joins)
+✓ Optimized for reads
+
+TRADE-OFF:
+- Eventual consistency (slight delay in updates)
+
+═══════════════════════════════════════════════════════════════════════════════
