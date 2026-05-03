@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Auth Diagnostic</title>
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            padding: 20px; 
+            background: #f5f5f5;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .status { 
+            padding: 15px; 
+            margin: 10px 0; 
+            border-radius: 5px; 
+            border-left: 4px solid;
+        }
+        .error { 
+            background: #ffebee; 
+            color: #c62828; 
+            border-color: #c62828;
+        }
+        .success { 
+            background: #e8f5e9; 
+            color: #2e7d32; 
+            border-color: #2e7d32;
+        }
+        .warning { 
+            background: #fff3e0; 
+            color: #ef6c00; 
+            border-color: #ef6c00;
+        }
+        .info {
+            background: #e3f2fd;
+            color: #1565c0;
+            border-color: #1565c0;
+        }
+        button { 
+            padding: 12px 24px; 
+            margin: 5px; 
+            cursor: pointer;
+            border: none;
+            border-radius: 4px;
+            font-size: 14px;
+            font-weight: 500;
+        }
+        .btn-primary {
+            background: #1976d2;
+            color: white;
+        }
+        .btn-danger {
+            background: #d32f2f;
+            color: white;
+        }
+        .btn-success {
+            background: #388e3c;
+            color: white;
+        }
+        button:hover {
+            opacity: 0.9;
+        }
+        h1 { color: #333; }
+        h2 { color: #555; margin-top: 30px; }
+        .token-preview {
+            font-family: monospace;
+            font-size: 12px;
+            background: #f5f5f5;
+            padding: 10px;
+            border-radius: 4px;
+            word-break: break-all;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔐 Authentication Diagnostic Tool</h1>
+        
+        <div id="status"></div>
+        
+        <h2>Actions:</h2>
+        <button class="btn-primary" onclick="checkAuth()">🔍 Check Auth Status</button>
+        <button class="btn-danger" onclick="clearAuth()">🗑️ Clear All Auth Data</button>
+        <button class="btn-success" onclick="window.location.href='http://localhost:4200/login'">🔑 Go to Login</button>
+    </div>
+    
+    <script>
+        function checkAuth() {
+            const statusDiv = document.getElementById('status');
+            const accessToken = localStorage.getItem('accessToken');
+            const refreshToken = localStorage.getItem('refreshToken');
+            const expiresAt = localStorage.getItem('expiresAt');
+            const role = localStorage.getItem('role');
+            
+            let html = '<h3>Current Authentication State:</h3>';
+            
+            // Check access token
+            if (!accessToken) {
+                html += '<div class="status error"><strong>❌ NO ACCESS TOKEN</strong><br>You are NOT logged in. Please log in first.</div>';
+            } else {
+                html += '<div class="status success"><strong>✅ Access Token Found</strong></div>';
+                html += '<div class="status info"><strong>Token Preview:</strong><br><div class="token-preview">' + accessToken.substring(0, 100) + '...</div></div>';
+                
+                // Check expiry
+                if (expiresAt) {
+                    const expiry = new Date(expiresAt);
+                    const now = new Date();
+                    const isExpired = expiry <= now;
+                    const timeLeft = Math.floor((expiry - now) / 1000 / 60); // minutes
+                    
+                    if (isExpired) {
+                        html += '<div class="status error"><strong>❌ TOKEN EXPIRED</strong><br>Expired at: ' + expiry.toLocaleString() + '<br>You need to log in again.</div>';
+                    } else {
+                        html += '<div class="status success"><strong>✅ Token Valid</strong><br>Expires at: ' + expiry.toLocaleString() + '<br>Time remaining: ' + timeLeft + ' minutes</div>';
+                    }
+                } else {
+                    html += '<div class="status warning"><strong>⚠️ No expiry information</strong></div>';
+                }
+            }
+            
+            // Check refresh token
+            if (refreshToken) {
+                html += '<div class="status success"><strong>✅ Refresh Token Found</strong></div>';
+            } else {
+                html += '<div class="status warning"><strong>⚠️ No Refresh Token</strong></div>';
+            }
+            
+            // Check role
+            if (role) {
+                html += '<div class="status success"><strong>✅ User Role:</strong> ' + role + '</div>';
+            } else {
+                html += '<div class="status warning"><strong>⚠️ No Role Information</strong></div>';
+            }
+            
+            // Summary
+            if (!accessToken || (expiresAt && new Date(expiresAt) <= new Date())) {
+                html += '<div class="status error"><strong>🚨 ACTION REQUIRED</strong><br>Your session is invalid or expired. Click "Clear All Auth Data" then "Go to Login" to log in again.</div>';
+            } else {
+                html += '<div class="status success"><strong>✅ ALL GOOD</strong><br>You are properly authenticated. If you\'re still getting 401 errors, the backend might not be recognizing your token.</div>';
+            }
+            
+            statusDiv.innerHTML = html;
+        }
+        
+        function clearAuth() {
+            if (confirm('This will clear all authentication data. You will need to log in again. Continue?')) {
+                localStorage.removeItem('accessToken');
+                localStorage.removeItem('refreshToken');
+                localStorage.removeItem('expiresAt');
+                localStorage.removeItem('role');
+                alert('✅ All auth data cleared! Click "Go to Login" to log in again.');
+                checkAuth();
+            }
+        }
+        
+        // Auto-check on load
+        window.onload = function() {
+            checkAuth();
+        };
+    </script>
+</body>
+</html>

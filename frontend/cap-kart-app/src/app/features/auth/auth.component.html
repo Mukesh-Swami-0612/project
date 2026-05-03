@@ -1,0 +1,364 @@
+<div class="auth-page" [class.signup-mode]="mode === 'signup'">
+
+  <!-- ── LEFT PANEL ─────────────────────────── -->
+  <div class="auth-left">
+    <!-- Background particles -->
+    <div class="particles">
+      @for (i of particleList; track i) {
+        <span class="particle" [attr.data-i]="i"></span>
+      }
+    </div>
+
+    <!-- Grid overlay -->
+    <div class="grid-overlay"></div>
+
+    <div class="left-content">
+      <app-logo class="left-logo" size="auth" alt="CapKart logo"></app-logo>
+
+      <!-- Hero text -->
+      <div class="hero-text">
+        <h1 class="hero-title">
+          @if (mode === 'login') {
+            Welcome <span class="accent-word">Back</span>
+          }
+          @if (mode === 'signup') {
+            Start Your <span class="accent-word">Journey</span>
+          }
+          @if (mode === 'forgot') {
+            Reset Your <span class="accent-word">Password</span>
+          }
+        </h1>
+        <p class="hero-sub">
+          @if (mode === 'login') { Manage your products with enterprise-grade tools built for scale. }
+          @if (mode === 'signup') { Join thousands of businesses managing inventory with CapKart. }
+          @if (mode === 'forgot') { We'll send a reset link to your email in seconds. }
+        </p>
+      </div>
+
+      <!-- Feature chips -->
+      @if (mode !== 'forgot') {
+        <div class="feature-chips">
+          <div class="chip">
+            <div class="chip-icon-box">
+              <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                  <linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stop-color="#84cc16"/>
+                    <stop offset="100%" stop-color="#22d3ee"/>
+                  </linearGradient>
+                </defs>
+                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" fill="url(#grad1)" stroke="url(#grad1)" stroke-width="0.5" stroke-linejoin="round"/>
+              </svg>
+            </div>
+            <span class="chip-text">Real-time<br>Sync</span>
+          </div>
+          <div class="chip">
+            <div class="chip-icon-box chip-icon-box--blue">
+              <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                  <linearGradient id="grad2" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stop-color="#22d3ee"/>
+                    <stop offset="100%" stop-color="#3b82f6"/>
+                  </linearGradient>
+                </defs>
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" fill="url(#grad2)" stroke="url(#grad2)" stroke-width="0.5"/>
+              </svg>
+            </div>
+            <span class="chip-text">Enterprise<br>Security</span>
+          </div>
+          <div class="chip">
+            <div class="chip-icon-box">
+              <svg viewBox="0 0 26 26" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                  <linearGradient id="grad3" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stop-color="#84cc16"/>
+                    <stop offset="100%" stop-color="#22d3ee"/>
+                  </linearGradient>
+                </defs>
+                <rect x="1" y="12" width="5" height="12" rx="1" fill="url(#grad3)"/>
+                <rect x="8" y="7" width="5" height="17" rx="1" fill="url(#grad3)"/>
+                <rect x="15" y="3" width="5" height="21" rx="1" fill="url(#grad3)"/>
+                <polyline points="1,14 7,8 13,11 21,2" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                <polyline points="18,2 21,2 21,5" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </div>
+            <span class="chip-text">Advanced<br>Analytics</span>
+          </div>
+          <div class="chip">
+            <div class="chip-icon-box chip-icon-box--teal">
+              <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                  <linearGradient id="grad4" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stop-color="#84cc16"/>
+                    <stop offset="100%" stop-color="#22d3ee"/>
+                  </linearGradient>
+                </defs>
+                <path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z" fill="url(#grad4)"/>
+                <path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z" fill="url(#grad4)"/>
+              </svg>
+            </div>
+            <span class="chip-text">Auto<br>Workflows</span>
+          </div>
+        </div>
+      }
+    </div>
+
+    <!-- Decoration circles -->
+    <div class="deco-circle c1"></div>
+    <div class="deco-circle c2"></div>
+    <div class="deco-circle c3"></div>
+  </div>
+
+  <!-- ── RIGHT PANEL ─────────────────────────── -->
+  <div class="auth-right">
+    <div class="form-card">
+
+      <!-- ── LOGIN FORM ── -->
+      <div class="form-panel" [class.active]="mode === 'login'" [class.slide-out-right]="mode === 'signup' || mode === 'forgot'">
+        <div class="form-header">
+          <h2 class="form-title">Sign In</h2>
+          <p class="form-subtitle">Enter your credentials to continue</p>
+        </div>
+
+        <form [formGroup]="loginForm" (ngSubmit)="onLogin()" novalidate>
+
+          <!-- Email -->
+          <div class="field-group" [class.has-error]="lf['email'].invalid && lf['email'].touched">
+            <label for="login-email" class="field-label">Email Address</label>
+            <div class="input-wrapper">
+              <input id="login-email" type="email" formControlName="email" class="form-input"
+                placeholder="you@company.com" autocomplete="email"/>
+            </div>
+            @if (lf['email'].touched && lf['email'].hasError('required')) {
+              <span class="field-error">Email is required</span>
+            }
+            @if (lf['email'].touched && lf['email'].hasError('email')) {
+              <span class="field-error">Enter a valid email address</span>
+            }
+          </div>
+
+          <!-- Password -->
+          <div class="field-group" [class.has-error]="lf['password'].invalid && lf['password'].touched">
+            <div class="label-row">
+              <label for="login-password" class="field-label">Password</label>
+              <button type="button" class="forgot-link" (click)="setMode('forgot')">Forgot password?</button>
+            </div>
+            <div class="input-wrapper">
+              <input id="login-password" [type]="showLoginPassword ? 'text' : 'password'"
+                formControlName="password" class="form-input"
+                placeholder="Enter your password" autocomplete="current-password"/>
+              <button type="button" class="eye-btn" (click)="toggleLoginPassword()">
+                @if (!showLoginPassword) {
+                  <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+                  </svg>
+                } @else {
+                  <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/>
+                    <line x1="1" y1="1" x2="23" y2="23"/>
+                  </svg>
+                }
+              </button>
+            </div>
+            @if (lf['password'].touched && lf['password'].hasError('required')) {
+              <span class="field-error">Password is required</span>
+            }
+          </div>
+
+          @if (loginError) {
+            <div class="alert alert-error"><span class="alert-icon">⚠</span> {{ loginError }}</div>
+          }
+
+          <button type="submit" class="btn-primary" [class.loading]="loginLoading" [disabled]="loginLoading">
+            @if (loginLoading) { <span class="btn-spinner"></span> }
+            {{ loginLoading ? 'Signing in...' : 'Sign In' }}
+          </button>
+        </form>
+
+        <div class="form-footer">
+          Don't have an account?
+          <button type="button" class="link-btn" (click)="setMode('signup')">Create account</button>
+        </div>
+      </div>
+
+      <!-- ── SIGNUP FORM ── -->
+      <div class="form-panel" [class.active]="mode === 'signup'" [class.slide-out-left]="mode === 'login' || mode === 'forgot'">
+        <div class="form-header">
+          <h2 class="form-title">Create Account</h2>
+          <p class="form-subtitle">Join CapKart — it's free to get started</p>
+        </div>
+
+        <form [formGroup]="signupForm" (ngSubmit)="onSignup()" novalidate class="signup-form-body">
+
+          <!-- Full Name -->
+          <div class="field-group" [class.has-error]="sf['name'].invalid && sf['name'].touched">
+            <label for="signup-name" class="field-label">Full Name</label>
+            <div class="input-wrapper">
+              <input id="signup-name" type="text" formControlName="name" class="form-input"
+                placeholder="Mukesh Kumar" autocomplete="name"/>
+            </div>
+            @if (sf['name'].touched && sf['name'].hasError('required')) {
+              <span class="field-error">Full name is required</span>
+            }
+            @if (sf['name'].touched && sf['name'].hasError('minlength')) {
+              <span class="field-error">Name must be at least 2 characters</span>
+            }
+          </div>
+
+          <!-- Email -->
+          <div class="field-group" [class.has-error]="sf['email'].invalid && sf['email'].touched">
+            <label for="signup-email" class="field-label">Email Address</label>
+            <div class="input-wrapper">
+              <input id="signup-email" type="email" formControlName="email" class="form-input"
+                placeholder="you@company.com" autocomplete="email"/>
+            </div>
+            @if (sf['email'].touched && sf['email'].hasError('required')) {
+              <span class="field-error">Email is required</span>
+            }
+            @if (sf['email'].touched && sf['email'].hasError('email')) {
+              <span class="field-error">Enter a valid email</span>
+            }
+          </div>
+
+          <!-- Password + Strength -->
+          <div class="field-group" [class.has-error]="sf['password'].invalid && sf['password'].touched">
+            <label for="signup-password" class="field-label">Password</label>
+            <div class="input-wrapper">
+              <input id="signup-password" [type]="showSignupPassword ? 'text' : 'password'"
+                formControlName="password" class="form-input"
+                placeholder="Min 8 chars, uppercase, number, symbol" autocomplete="new-password"/>
+              <button type="button" class="eye-btn" (click)="toggleSignupPassword()">
+                @if (!showSignupPassword) {
+                  <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+                  </svg>
+                } @else {
+                  <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/>
+                    <line x1="1" y1="1" x2="23" y2="23"/>
+                  </svg>
+                }
+              </button>
+            </div>
+            @if (sf['password'].value) {
+              <div class="strength-meter">
+                <div class="strength-bar">
+                  <div class="strength-fill" [class]="passwordStrengthClass" [style.width.%]="passwordStrength"></div>
+                </div>
+                <span class="strength-label" [class]="passwordStrengthClass">{{ passwordStrengthLabel }}</span>
+              </div>
+            }
+            @if (sf['password'].touched && sf['password'].hasError('required')) {
+              <span class="field-error">Password is required</span>
+            }
+            @if (sf['password'].touched && sf['password'].hasError('minlength')) {
+              <span class="field-error">Minimum 8 characters</span>
+            }
+            @if (sf['password'].touched && sf['password'].hasError('complexity')) {
+              <span class="field-error">Must include uppercase, lowercase, number &amp; symbol</span>
+            }
+          </div>
+
+          <!-- Confirm Password -->
+          <div class="field-group" [class.has-error]="sf['confirmPassword'].invalid && sf['confirmPassword'].touched">
+            <label for="signup-confirm" class="field-label">Confirm Password</label>
+            <div class="input-wrapper">
+              <input id="signup-confirm" [type]="showConfirmPassword ? 'text' : 'password'"
+                formControlName="confirmPassword" class="form-input"
+                placeholder="Re-enter your password" autocomplete="new-password"/>
+              <button type="button" class="eye-btn" (click)="toggleConfirmPassword()">
+                @if (!showConfirmPassword) {
+                  <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+                  </svg>
+                } @else {
+                  <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/>
+                    <line x1="1" y1="1" x2="23" y2="23"/>
+                  </svg>
+                }
+              </button>
+            </div>
+            @if (sf['confirmPassword'].touched && sf['confirmPassword'].hasError('required')) {
+              <span class="field-error">Please confirm your password</span>
+            }
+            @if (sf['confirmPassword'].touched && sf['confirmPassword'].hasError('mismatch')) {
+              <span class="field-error">Passwords do not match</span>
+            }
+          </div>
+
+          @if (signupError) {
+            <div class="alert alert-error"><span class="alert-icon">⚠</span> {{ signupError }}</div>
+          }
+          @if (signupSuccess) {
+            <div class="alert alert-success"><span class="alert-icon">✓</span> {{ signupSuccess }}</div>
+          }
+
+          <!-- Verify Option for Unverified Email -->
+          @if (showVerifyOption) {
+            <div class="verify-box">
+              <p class="verify-text">Click below to verify your email address</p>
+              <button type="button" class="btn-secondary" (click)="goToVerify()">
+                Verify Email
+              </button>
+            </div>
+          }
+
+          <button type="submit" class="btn-primary" [class.loading]="signupLoading" [disabled]="signupLoading">
+            @if (signupLoading) { <span class="btn-spinner"></span> }
+            {{ signupLoading ? 'Creating account...' : 'Create Account' }}
+          </button>
+        </form>
+
+        <div class="form-footer">
+          Already have an account?
+          <button type="button" class="link-btn" (click)="setMode('login')">Sign in</button>
+        </div>
+      </div>
+
+      <!-- ── FORGOT PASSWORD FORM ── -->
+      <div class="form-panel" [class.active]="mode === 'forgot'" [class.slide-out-left]="mode !== 'forgot'">
+        <div class="form-header">
+          <button type="button" class="back-btn" (click)="setMode('login')">
+            <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/>
+            </svg>
+            Back to Sign In
+          </button>
+          <h2 class="form-title" style="margin-top: 1.2rem;">Forgot Password</h2>
+          <p class="form-subtitle">Enter your email and we'll send a reset link</p>
+        </div>
+
+        <form [formGroup]="forgotForm" (ngSubmit)="onForgotPassword()" novalidate>
+          <div class="field-group" [class.has-error]="ff['email'].invalid && ff['email'].touched">
+            <label for="forgot-email" class="field-label">Email Address</label>
+            <div class="input-wrapper">
+              <input id="forgot-email" type="email" formControlName="email" class="form-input"
+                placeholder="you@company.com" autocomplete="email"/>
+            </div>
+            @if (ff['email'].touched && ff['email'].hasError('required')) {
+              <span class="field-error">Email is required</span>
+            }
+            @if (ff['email'].touched && ff['email'].hasError('email')) {
+              <span class="field-error">Enter a valid email</span>
+            }
+          </div>
+
+          @if (forgotError) {
+            <div class="alert alert-error"><span class="alert-icon">⚠</span> {{ forgotError }}</div>
+          }
+          @if (forgotSuccess) {
+            <div class="alert alert-success"><span class="alert-icon">✓</span> {{ forgotSuccess }}</div>
+          }
+
+          <button type="submit" class="btn-primary" [class.loading]="forgotLoading" [disabled]="forgotLoading">
+            @if (forgotLoading) { <span class="btn-spinner"></span> }
+            {{ forgotLoading ? 'Sending...' : 'Send Reset Code' }}
+          </button>
+        </form>
+      </div>
+
+    </div><!-- /.form-card -->
+  </div><!-- /.auth-right -->
+
+</div><!-- /.auth-page -->

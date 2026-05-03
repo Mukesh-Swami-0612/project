@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+    <div style="background: linear-gradient(135deg, #ff9800 0%, #ff5722 100%); padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+        <h1 style="color: white; margin: 0; font-size: 28px;">⚠️ Workflow Alert</h1>
+    </div>
+    
+    <div style="background-color: #ffffff; padding: 30px; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 10px 10px;">
+        <h2 style="color: #ff9800; margin-top: 0;">Workflow Execution Failed</h2>
+        
+        <p style="font-size: 16px; margin: 20px 0;">
+            A workflow execution has failed and requires your attention.
+        </p>
+        
+        <div style="background-color: #fff3e0; padding: 20px; border-left: 4px solid #ff9800; border-radius: 5px; margin: 25px 0;">
+            <p style="margin: 0 0 10px 0; font-weight: bold; color: #e65100;">Workflow Details:</p>
+            <p style="margin: 5px 0; color: #666; font-size: 14px;"><strong>Workflow ID:</strong> {{WorkflowId}}</p>
+            <p style="margin: 5px 0; color: #666; font-size: 14px;"><strong>Failed At:</strong> {{FailedAt}}</p>
+            <p style="margin: 15px 0 5px 0; color: #666; font-size: 14px;"><strong>Error:</strong></p>
+            <p style="margin: 5px 0; color: #333; font-size: 14px; background-color: #fff; padding: 10px; border-radius: 3px;">{{Error}}</p>
+        </div>
+        
+        <p style="font-size: 16px; margin: 20px 0;">
+            Please review the error details and take appropriate action to resolve the issue.
+        </p>
+        
+        <p style="color: #666; font-size: 14px; margin-top: 30px;">
+            Best regards,<br/>
+            <strong>System Operations Team</strong>
+        </p>
+    </div>
+    
+    <div style="text-align: center; margin-top: 20px; color: #999; font-size: 12px;">
+        <p>© 2026 Ecom Platform. All rights reserved.</p>
+    </div>
+</body>
+</html>

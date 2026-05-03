@@ -1,0 +1,15 @@
+<span class="logo-shell" [class]="'logo-shell logo-shell--' + size">
+  @if (!imageFailed) {
+    <img
+      class="logo-image"
+      [src]="src"
+      [alt]="alt"
+      decoding="async"
+      (error)="imageFailed = true"
+    />
+  } @else {
+    <span class="logo-fallback" aria-label="CapKart">
+      <span>Cap</span><span>Kart</span>
+    </span>
+  }
+</span>

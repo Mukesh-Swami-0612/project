@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Auth Diagnostic</title>
+    <style>
+        body { font-family: Arial; padding: 20px; }
+        .status { padding: 10px; margin: 10px 0; border-radius: 5px; }
+        .error { background: #ffebee; color: #c62828; }
+        .success { background: #e8f5e9; color: #2e7d32; }
+        .warning { background: #fff3e0; color: #ef6c00; }
+        button { padding: 10px 20px; margin: 5px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h1>Authentication Diagnostic Tool</h1>
+    
+    <div id="status"></div>
+    
+    <h2>Actions:</h2>
+    <button onclick="checkAuth()">Check Auth Status</button>
+    <button onclick="clearAuth()">Clear All Auth Data</button>
+    <button onclick="window.location.href='http://localhost:4200/login'">Go to Login</button>
+    
+    <script>
+        function checkAuth() {
+            const statusDiv = document.getElementById('status');
+            const accessToken = localStorage.getItem('accessToken');
+            const refreshToken = localStorage.getItem('refreshToken');
+            const expiresAt = localStorage.getItem('expiresAt');
+            const role = localStorage.getItem('role');
+            
+            let html = '<h3>Current Auth State:</h3>';
+            
+            if (!accessToken) {
+                html += '<div class="status error">❌ No access token found - You are NOT logged in</div>';
+            } else {
+                html += '<div class="status success">✅ Access token exists</div>';
+                html += '<div class="status">Token: ' + accessToken.substring(0, 50) + '...</div>';
+                
+                if (expiresAt) {
+                    const expiry = new Date(expiresAt);
+                    const now = new Date();
+                    const isExpired = expiry <= now;
+                    
+                    if (isExpired) {
+                        html += '<div class="status error">❌ Token EXPIRED at ' + expiry.toLocaleString() + '</div>';
+                    } else {
+                        html += '<div class="status success">✅ Token valid until ' + expiry.toLocaleString() + '</div>';
+                    }
+                }
+            }
+            
+            if (refreshToken) {
+                html += '<div class="status success">✅ Refresh token exists</div>';
+            } else {
+                html += '<div class="status warning">⚠️ No refresh token</div>';
+            }
+            
+            if (role) {
+                html += '<div class="status success">✅ Role: ' + role + '</div>';
+            }
+            
+            statusDiv.innerHTML = html;
+        }
+        
+        function clearAuth() {
+            localStorage.removeItem('accessToken');
+            localStorage.removeItem('refreshToken');
+            localStorage.removeItem('expiresAt');
+            localStorage.removeItem('role');
+            alert('All auth data cleared! Please log in again.');
+            checkAuth();
+        }
+        
+        // Auto-check on load
+        checkAuth();
+    </script>
+</body>
+</html>

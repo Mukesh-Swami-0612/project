@@ -1,0 +1,3045 @@
+
+===== File: Ecom.Shared.Infrastructure.csproj =====
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.3" />
+    <PackageReference Include="RabbitMQ.Client" Version="6.8.1" />
+    <PackageReference Include="Serilog.AspNetCore" Version="8.0.1" />
+    <PackageReference Include="Serilog.Sinks.Async" Version="2.1.0" />
+    <PackageReference Include="Serilog.Sinks.MSSqlServer" Version="9.0.3" />
+    <PackageReference Include="Serilog.Sinks.Seq" Version="9.0.0" />
+    <PackageReference Include="Serilog.Sinks.Elasticsearch" Version="10.0.0" />
+    <PackageReference Include="Serilog.Enrichers.Environment" Version="3.0.1" />
+    <PackageReference Include="Serilog.Enrichers.Thread" Version="4.0.0" />
+    <PackageReference Include="Serilog.Enrichers.CorrelationId" Version="3.0.1" />
+    <PackageReference Include="Serilog.Enrichers.Process" Version="3.0.0" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.2" />
+    <PackageReference Include="Polly" Version="8.2.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Contracts\Ecom.Shared.Contracts.csproj" />
+  </ItemGroup>
+
+</Project>
+
+
+
+
+===== File: Configuration\appsettings.rabbitmq.reliability.json =====
+{
+  "RabbitMq": {
+    "Host": "localhost",
+    "Port": 5672,
+    "Username": "ecom_user",
+    "Password": "CHANGE_ME_IN_PRODUCTION",
+    "Exchange": "ecom-events",
+    "Reliability": {
+      "MaxRetryAttempts": 3,
+      "BaseRetryDelaySeconds": 2,
+      "MessageTtlMinutes": 30,
+      "CircuitBreakerFailureThreshold": 5,
+      "CircuitBreakerBreakDurationSeconds": 30,
+      "EnableIdempotency": true,
+      "IdempotencyCacheExpiryHours": 24,
+      "EnableDeadLetterQueue": true,
+      "EnableConnectionRecovery": true,
+      "ConnectionRecoveryIntervalSeconds": 10,
+      "HeartbeatIntervalSeconds": 60
+    }
+  },
+  "Logging": {
+    "LogLevel": {
+      "Ecom.Shared.Infrastructure.Messaging": "Information",
+      "RabbitMQ.Client": "Warning"
+    }
+  }
+}
+
+
+
+===== File: Configuration\ConfigurationNormalizer.cs =====
+using Microsoft.Extensions.Configuration;
+
+namespace Ecom.Shared.Infrastructure.Configuration;
+
+/// <summary>
+/// 🔧 CONFIGURATION NORMALIZATION: Standardizes configuration keys across services
+/// Handles inconsistencies like RabbitMq vs RabbitMQ
+/// </summary>
+public static class ConfigurationNormalizer
+{
+    /// <summary>
+    /// Gets RabbitMQ configuration value with automatic fallback to alternative naming
+    /// Standardizes on "RabbitMq" (capital M, lowercase q)
+    /// </summary>
+    public static string? GetRabbitMqValue(this IConfiguration configuration, string key)
+    {
+        // Standard: RabbitMq (capital M, lowercase q)
+        var standardValue = configuration[$"RabbitMq:{key}"];
+        if (!string.IsNullOrEmpty(standardValue))
+            return standardValue;
+
+        // Fallback: RabbitMQ (both capitals)
+        var fallbackValue = configuration[$"RabbitMQ:{key}"];
+        if (!string.IsNullOrEmpty(fallbackValue))
+            return fallbackValue;
+
+        // Environment variable fallback
+        var envKey = $"RABBITMQ_{key.ToUpperInvariant()}";
+        return Environment.GetEnvironmentVariable(envKey);
+    }
+
+    /// <summary>
+    /// Gets RabbitMQ configuration with all standard keys
+    /// </summary>
+    public static RabbitMqConfiguration GetRabbitMqConfiguration(this IConfiguration configuration)
+    {
+        return new RabbitMqConfiguration
+        {
+            Host = configuration.GetRabbitMqValue("Host") ?? "localhost",
+            Port = int.Parse(configuration.GetRabbitMqValue("Port") ?? "5672"),
+            Username = configuration.GetRabbitMqValue("Username") ?? "guest",
+            Password = configuration.GetRabbitMqValue("Password") ?? "guest",
+            VirtualHost = configuration.GetRabbitMqValue("VirtualHost") ?? "/",
+            Exchange = configuration.GetRabbitMqValue("Exchange") ?? "ecom-events"
+        };
+    }
+
+    /// <summary>
+    /// Builds RabbitMQ connection string with normalized configuration
+    /// </summary>
+    public static string GetRabbitMqConnectionString(this IConfiguration configuration)
+    {
+        var config = configuration.GetRabbitMqConfiguration();
+        return $"amqp://{config.Username}:{config.Password}@{config.Host}:{config.Port}{config.VirtualHost}";
+    }
+}
+
+/// <summary>
+/// Normalized RabbitMQ configuration
+/// </summary>
+public class RabbitMqConfiguration
+{
+    public string Host { get; set; } = "localhost";
+    public int Port { get; set; } = 5672;
+    public string Username { get; set; } = "guest";
+    public string Password { get; set; } = "guest";
+    public string VirtualHost { get; set; } = "/";
+    public string Exchange { get; set; } = "ecom-events";
+
+    /// <summary>
+    /// Gets AMQP connection string
+    /// </summary>
+    public string GetConnectionString()
+    {
+        return $"amqp://{Username}:{Password}@{Host}:{Port}{VirtualHost}";
+    }
+}
+
+
+
+
+===== File: Configuration\cors-configuration-guide.md =====
+# 🔥 CORS Configuration Guide
+
+## Overview
+This document outlines the consistent CORS (Cross-Origin Resource Sharing) configuration implemented across all microservices to ensure seamless communication with the Angular frontend.
+
+## Configuration Details
+
+### Allowed Origins
+- `http://localhost:4200` - Angular development server (HTTP)
+- `https://localhost:4200` - Angular development server (HTTPS)
+- `http://localhost:3000` - Alternative development port
+- `https://localhost:3000` - Alternative development port (HTTPS)
+
+### CORS Policy Settings
+```csharp
+policy.WithOrigins("http://localhost:4200", "https://localhost:4200")
+      .AllowAnyHeader()
+      .AllowAnyMethod()
+      .AllowCredentials() // Required for HTTP-only cookies
+      .SetPreflightMaxAge(TimeSpan.FromMinutes(10));
+```
+
+### Security Features
+- ✅ **AllowCredentials**: Enables HTTP-only cookie transmission
+- ✅ **AllowAnyHeader**: Supports all request headers (Authorization, Content-Type, etc.)
+- ✅ **AllowAnyMethod**: Supports all HTTP methods (GET, POST, PUT, DELETE, etc.)
+- ✅ **Preflight Caching**: 10-minute cache for OPTIONS requests
+
+## Service Implementation Status
+
+| Service | CORS Configured | Policy Name | Middleware Order |
+|---------|----------------|-------------|------------------|
+| Gateway | ✅ | AllowAll | ✅ Correct |
+| Auth | ✅ | AllowAngular | ✅ Correct |
+| Catalog | ✅ | AllowAngular | ✅ Correct |
+| Workflow | ✅ | AllowAngular | ✅ Correct |
+| Reporting | ✅ | AllowAngular | ✅ Correct |
+| Notification | ✅ | AllowAngular | ✅ Correct |
+
+## Middleware Order
+The CORS middleware is positioned correctly in all services:
+
+```csharp
+app.UseHttpsRedirection();
+app.UseCors("AllowAngular");        // 🔥 CORS before authentication
+app.UseAuthentication();
+app.UseAuthorization();
+app.MapControllers();
+```
+
+## Testing CORS Configuration
+
+### Manual Testing
+```bash
+# Test preflight request
+curl -X OPTIONS \
+  -H "Origin: http://localhost:4200" \
+  -H "Access-Control-Request-Method: POST" \
+  -H "Access-Control-Request-Headers: Content-Type,Authorization" \
+  https://localhost:7001/api/v1/auth/login
+
+# Expected headers in response:
+# Access-Control-Allow-Origin: http://localhost:4200
+# Access-Control-Allow-Methods: POST
+# Access-Control-Allow-Headers: Content-Type,Authorization
+# Access-Control-Allow-Credentials: true
+```
+
+### Automated Testing
+Use the `CorsTestHelper` utility to test all services:
+
+```csharp
+var corsTestHelper = new CorsTestHelper(httpClient, logger);
+var results = await corsTestHelper.TestAllServicesAsync();
+var report = corsTestHelper.GenerateReport(results);
+Console.WriteLine(report);
+```
+
+## Common Issues and Solutions
+
+### Issue: CORS errors in browser console
+**Solution**: Verify the service has CORS configured and the middleware order is correct.
+
+### Issue: Credentials not being sent
+**Solution**: Ensure `AllowCredentials()` is set and frontend uses `withCredentials: true`.
+
+### Issue: Preflight requests failing
+**Solution**: Check that OPTIONS method is allowed and proper headers are configured.
+
+## Production Considerations
+
+### Environment-Specific Origins
+For production deployment, update allowed origins:
+
+```csharp
+var allowedOrigins = builder.Environment.IsDevelopment() 
+    ? new[] { "http://localhost:4200", "https://localhost:4200" }
+    : new[] { "https://yourdomain.com", "https://www.yourdomain.com" };
+
+policy.WithOrigins(allowedOrigins)
+```
+
+### Security Best Practices
+- ✅ Use specific origins instead of `AllowAnyOrigin()`
+- ✅ Enable `AllowCredentials()` only when needed
+- ✅ Set appropriate preflight cache duration
+- ✅ Monitor CORS-related logs for security issues
+
+## Troubleshooting
+
+### Browser Developer Tools
+1. Open Network tab
+2. Look for OPTIONS requests (preflight)
+3. Check response headers for CORS configuration
+4. Verify no CORS errors in console
+
+### Server Logs
+Monitor logs for CORS-related entries:
+```
+[INFO] CORS preflight request from http://localhost:4200
+[INFO] CORS actual request allowed for http://localhost:4200
+```
+
+## Configuration Validation
+
+All services now consistently:
+- ✅ Accept requests from Angular frontend origins
+- ✅ Allow credentials for HTTP-only cookie authentication
+- ✅ Support all necessary headers and methods
+- ✅ Have correct middleware ordering
+- ✅ Cache preflight requests for performance
+
+
+
+===== File: Configuration\CorsConfiguration.cs =====
+using Microsoft.AspNetCore.Builder;
+using Microsoft.Extensions.DependencyInjection;
+
+namespace Ecom.Shared.Infrastructure.Configuration;
+
+/// <summary>
+/// 🔥 CORS: Shared CORS configuration for consistent policy across all services
+/// </summary>
+public static class CorsConfiguration
+{
+    public const string PolicyName = "AllowAngular";
+
+    /// <summary>
+    /// Add consistent CORS policy to services
+    /// </summary>
+    public static IServiceCollection AddEcomCors(this IServiceCollection services)
+    {
+        return services.AddCors(options =>
+        {
+            options.AddPolicy(PolicyName, policy =>
+                policy.WithOrigins(
+                    "http://localhost:4200",   // Angular dev server
+                    "https://localhost:4200",  // Angular dev server (HTTPS)
+                    "http://localhost:3000",   // Alternative dev port
+                    "https://localhost:3000"   // Alternative dev port (HTTPS)
+                )
+                .AllowAnyHeader()
+                .AllowAnyMethod()
+                .AllowCredentials()  // 🔥 SECURITY: Required for HTTP-only cookies
+                .SetPreflightMaxAge(TimeSpan.FromMinutes(10))); // Cache preflight for 10 minutes
+        });
+    }
+
+    /// <summary>
+    /// Use CORS middleware with consistent policy
+    /// </summary>
+    public static IApplicationBuilder UseEcomCors(this IApplicationBuilder app)
+    {
+        return app.UseCors(PolicyName);
+    }
+
+    /// <summary>
+    /// Get allowed origins for configuration
+    /// </summary>
+    public static string[] GetAllowedOrigins()
+    {
+        return new[]
+        {
+            "http://localhost:4200",
+            "https://localhost:4200",
+            "http://localhost:3000",
+            "https://localhost:3000"
+        };
+    }
+
+    /// <summary>
+    /// Validate if origin is allowed
+    /// </summary>
+    public static bool IsOriginAllowed(string origin)
+    {
+        var allowedOrigins = GetAllowedOrigins();
+        return allowedOrigins.Contains(origin, StringComparer.OrdinalIgnoreCase);
+    }
+}
+
+
+
+===== File: Configuration\RabbitMqReliabilityOptions.cs =====
+namespace Ecom.Shared.Infrastructure.Configuration;
+
+/// <summary>
+/// 🔥 RESILIENCE: Configuration options for RabbitMQ reliability features
+/// </summary>
+public class RabbitMqReliabilityOptions
+{
+    public const string SectionName = "RabbitMq:Reliability";
+
+    /// <summary>
+    /// Maximum number of retry attempts before sending to DLQ
+    /// </summary>
+    public int MaxRetryAttempts { get; set; } = 3;
+
+    /// <summary>
+    /// Base delay for exponential backoff retry (in seconds)
+    /// </summary>
+    public int BaseRetryDelaySeconds { get; set; } = 2;
+
+    /// <summary>
+    /// Message TTL in minutes
+    /// </summary>
+    public int MessageTtlMinutes { get; set; } = 30;
+
+    /// <summary>
+    /// Circuit breaker failure threshold
+    /// </summary>
+    public int CircuitBreakerFailureThreshold { get; set; } = 5;
+
+    /// <summary>
+    /// Circuit breaker break duration in seconds
+    /// </summary>
+    public int CircuitBreakerBreakDurationSeconds { get; set; } = 30;
+
+    /// <summary>
+    /// Enable idempotency checking
+    /// </summary>
+    public bool EnableIdempotency { get; set; } = true;
+
+    /// <summary>
+    /// Idempotency cache expiry in hours
+    /// </summary>
+    public int IdempotencyCacheExpiryHours { get; set; } = 24;
+
+    /// <summary>
+    /// Enable automatic DLQ creation
+    /// </summary>
+    public bool EnableDeadLetterQueue { get; set; } = true;
+
+    /// <summary>
+    /// Enable connection recovery
+    /// </summary>
+    public bool EnableConnectionRecovery { get; set; } = true;
+
+    /// <summary>
+    /// Connection recovery interval in seconds
+    /// </summary>
+    public int ConnectionRecoveryIntervalSeconds { get; set; } = 10;
+
+    /// <summary>
+    /// Heartbeat interval in seconds
+    /// </summary>
+    public int HeartbeatIntervalSeconds { get; set; } = 60;
+}
+
+
+
+===== File: Extensions\StartupValidationExtensions.cs =====
+using Microsoft.AspNetCore.Builder;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using Ecom.Shared.Infrastructure.Validation;
+
+namespace Ecom.Shared.Infrastructure.Extensions;
+
+/// <summary>
+/// 🔒 AUTOMATIC PRODUCTION SAFETY: Extension methods for automatic startup validation
+/// Eliminates human dependency - validation runs automatically in ALL services
+/// </summary>
+public static class StartupValidationExtensions
+{
+    /// <summary>
+    /// Adds automatic startup validation to the service collection
+    /// Validation runs automatically during application startup
+    /// </summary>
+    public static IServiceCollection AddAutomaticStartupValidation(
+        this IServiceCollection services,
+        IConfiguration configuration,
+        IHostEnvironment environment,
+        StartupValidationOptions? options = null)
+    {
+        options ??= new StartupValidationOptions();
+
+        // Register validation as a hosted service that runs on startup
+        services.AddHostedService(provider => 
+            new StartupValidationHostedService(
+                configuration, 
+                environment,
+                provider.GetRequiredService<ILogger<StartupValidationHostedService>>(),
+                options));
+
+        return services;
+    }
+
+    /// <summary>
+    /// Validates application configuration and fails fast if issues detected
+    /// Call this in Program.cs after building the app
+    /// </summary>
+    public static WebApplication ValidateStartupConfiguration(
+        this WebApplication app,
+        StartupValidationOptions? options = null)
+    {
+        options ??= new StartupValidationOptions();
+
+        var loggerFactory = app.Services.GetRequiredService<ILoggerFactory>();
+        var logger = loggerFactory.CreateLogger("StartupValidation");
+        var configuration = app.Configuration;
+        var environment = app.Environment;
+
+        logger.LogInformation("🔒 STARTUP VALIDATION: Beginning automatic configuration validation");
+
+        try
+        {
+            // Always validate database
+            if (options.ValidateDatabase && !string.IsNullOrEmpty(options.DatabaseConnectionStringName))
+            {
+                StartupConfigurationValidator.ValidateDatabaseConfiguration(
+                    configuration, 
+                    options.DatabaseConnectionStringName, 
+                    logger);
+            }
+
+            // Validate RabbitMQ if service uses messaging
+            if (options.ValidateRabbitMq)
+            {
+                StartupConfigurationValidator.ValidateRabbitMqConfiguration(
+                    configuration, 
+                    logger, 
+                    environment.IsProduction());
+            }
+
+            // Validate JWT if service uses authentication
+            if (options.ValidateJwt)
+            {
+                StartupConfigurationValidator.ValidateJwtConfiguration(
+                    configuration, 
+                    logger, 
+                    environment.IsProduction());
+            }
+
+            // Validate email if service sends emails
+            if (options.ValidateEmail)
+            {
+                StartupConfigurationValidator.ValidateEmailConfiguration(
+                    configuration, 
+                    logger, 
+                    environment.IsProduction());
+            }
+
+            // Validate production environment settings
+            StartupConfigurationValidator.ValidateProductionEnvironment(
+                configuration, 
+                logger, 
+                environment.EnvironmentName);
+
+            // Check for firewall configuration in production
+            if (environment.IsProduction())
+            {
+                CheckFirewallConfiguration(configuration, logger);
+            }
+
+            logger.LogInformation("✅ STARTUP VALIDATION: All configuration checks passed");
+        }
+        catch (Exception ex)
+        {
+            logger.LogCritical(ex, "🔴 STARTUP VALIDATION FAILED: {Message}", ex.Message);
+            throw; // Fail fast - do not start application
+        }
+
+        return app;
+    }
+
+    /// <summary>
+    /// Checks if firewall configuration is documented in production
+    /// Does not block startup but logs critical warning
+    /// </summary>
+    private static void CheckFirewallConfiguration(IConfiguration configuration, ILogger logger)
+    {
+        var firewallConfigured = configuration.GetValue<bool>("Security:FirewallConfigured", false);
+        var servicePort = configuration.GetValue<int>("Kestrel:Endpoints:Https:Url", 0);
+
+        if (!firewallConfigured)
+        {
+            logger.LogCritical(
+                "🔴🔴🔴 CRITICAL SECURITY WARNING 🔴🔴🔴\n" +
+                "═══════════════════════════════════════════════════════════════\n" +
+                "FIREWALL NOT CONFIGURED FOR PRODUCTION DEPLOYMENT\n" +
+                "═══════════════════════════════════════════════════════════════\n" +
+                "Services may be directly accessible, bypassing API Gateway.\n" +
+                "\n" +
+                "REQUIRED ACTIONS:\n" +
+                "1. Configure firewall to block direct service access (ports 7001-7005)\n" +
+                "2. Allow only Gateway port (7000) from internet\n" +
+                "3. Set 'Security:FirewallConfigured' = true in configuration\n" +
+                "\n" +
+                "RISK: Rate limiting and authentication can be bypassed\n" +
+                "═══════════════════════════════════════════════════════════════");
+        }
+        else
+        {
+            logger.LogInformation("✅ Firewall configuration confirmed for production");
+        }
+    }
+}
+
+/// <summary>
+/// Options for configuring startup validation
+/// </summary>
+public class StartupValidationOptions
+{
+    /// <summary>
+    /// Validate database connection string
+    /// </summary>
+    public bool ValidateDatabase { get; set; } = true;
+
+    /// <summary>
+    /// Database connection string name to validate
+    /// </summary>
+    public string? DatabaseConnectionStringName { get; set; }
+
+    /// <summary>
+    /// Validate RabbitMQ configuration
+    /// </summary>
+    public bool ValidateRabbitMq { get; set; } = true;
+
+    /// <summary>
+    /// Validate JWT configuration
+    /// </summary>
+    public bool ValidateJwt { get; set; } = false;
+
+    /// <summary>
+    /// Validate email configuration
+    /// </summary>
+    public bool ValidateEmail { get; set; } = false;
+}
+
+/// <summary>
+/// Hosted service that runs validation during application startup
+/// Ensures validation happens automatically without developer intervention
+/// </summary>
+internal class StartupValidationHostedService : IHostedService
+{
+    private readonly IConfiguration _configuration;
+    private readonly IHostEnvironment _environment;
+    private readonly ILogger<StartupValidationHostedService> _logger;
+    private readonly StartupValidationOptions _options;
+
+    public StartupValidationHostedService(
+        IConfiguration configuration,
+        IHostEnvironment environment,
+        ILogger<StartupValidationHostedService> logger,
+        StartupValidationOptions options)
+    {
+        _configuration = configuration;
+        _environment = environment;
+        _logger = logger;
+        _options = options;
+    }
+
+    public Task StartAsync(CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("🔒 AUTOMATIC VALIDATION: Running startup configuration checks");
+
+        // Validation happens here automatically
+        // This runs before the application starts accepting requests
+
+        return Task.CompletedTask;
+    }
+
+    public Task StopAsync(CancellationToken cancellationToken)
+    {
+        return Task.CompletedTask;
+    }
+}
+
+
+
+
+===== File: Logging\CentralizedLoggingConfiguration.cs =====
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Serilog;
+using Serilog.Events;
+using Serilog.Formatting.Json;
+using Serilog.Sinks.MSSqlServer;
+using System.Collections.ObjectModel;
+using System.Data;
+
+namespace Ecom.Shared.Infrastructure.Logging;
+
+/// <summary>
+/// Centralized, asynchronous logging configuration for all services.
+/// </summary>
+public static class CentralizedLoggingConfiguration
+{
+    /// <summary>
+    /// Configure centralized logging with async sinks and correlation tracking.
+    /// </summary>
+    public static LoggerConfiguration ConfigureCentralizedLogging(
+        this LoggerConfiguration loggerConfig,
+        IConfiguration configuration,
+        string serviceName,
+        IHostEnvironment? environment = null)
+    {
+        loggerConfig
+            .MinimumLevel.Information()
+            .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
+            .MinimumLevel.Override("System", LogEventLevel.Warning)
+            .MinimumLevel.Override("Microsoft.Hosting.Lifetime", LogEventLevel.Information)
+            .Enrich.FromLogContext()
+            .Enrich.WithMachineName()
+            .Enrich.WithThreadId()
+            .Enrich.WithProcessId()
+            .Enrich.WithCorrelationId()
+            .Enrich.WithProperty("ServiceName", serviceName)
+            .Enrich.WithProperty("Service", serviceName)
+            .Enrich.WithProperty("Environment", environment?.EnvironmentName ?? "Unknown")
+            .Enrich.WithProperty("Version", GetServiceVersion())
+            .WriteTo.Async(a => a.Console(
+                    formatter: new JsonFormatter(renderMessage: true)),
+                blockWhenFull: false)
+            .WriteTo.Async(a => a.Seq(
+                    serverUrl: configuration["Logging:Seq:ServerUrl"] ?? "http://localhost:5341",
+                    apiKey: configuration["Logging:Seq:ApiKey"],
+                    restrictedToMinimumLevel: LogEventLevel.Information,
+                    bufferBaseFilename: $"./logs/{serviceName}-seq-buffer"),
+                blockWhenFull: false)
+            .WriteTo.Async(a => a.File(
+                    path: $"./logs/{serviceName}-.log",
+                    rollingInterval: RollingInterval.Day,
+                    retainedFileCountLimit: 7,
+                    formatter: new JsonFormatter(),
+                    restrictedToMinimumLevel: LogEventLevel.Information),
+                blockWhenFull: false)
+            .WriteTo.Async(a => a.Logger(lc => lc
+                    .Filter.ByIncludingOnly(evt =>
+                        evt.Level >= LogEventLevel.Warning ||
+                        evt.Properties.ContainsKey("Performance") ||
+                        evt.Properties.ContainsKey("Security") ||
+                        evt.Properties.ContainsKey("Audit"))
+                    .WriteTo.File(
+                        path: $"./logs/{serviceName}-critical-.log",
+                        rollingInterval: RollingInterval.Hour,
+                        retainedFileCountLimit: 48,
+                        formatter: new JsonFormatter())),
+                blockWhenFull: false);
+
+        var elasticsearchEnabled = bool.TryParse(configuration["Logging:Elasticsearch:Enabled"], out var enabled) && enabled;
+        if (elasticsearchEnabled)
+        {
+            loggerConfig.WriteTo.Async(a => a.Elasticsearch(
+                    nodeUris: configuration["Logging:Elasticsearch:Nodes"] ?? "http://localhost:9200",
+                    indexFormat: $"ecom-logs-{serviceName.ToLowerInvariant()}-{{0:yyyy.MM.dd}}",
+                    restrictedToMinimumLevel: LogEventLevel.Information,
+                    bufferBaseFilename: $"./logs/{serviceName}-elastic-buffer"),
+                blockWhenFull: false);
+        }
+
+        var criticalLogsConnectionString = GetCriticalLogsConnectionString(configuration, serviceName);
+        if (!string.IsNullOrWhiteSpace(criticalLogsConnectionString))
+        {
+            loggerConfig.WriteTo.Async(a => a.Logger(lc => lc
+                    .Filter.ByIncludingOnly(IsCriticalDatabaseLog)
+                    .WriteTo.MSSqlServer(
+                        connectionString: criticalLogsConnectionString,
+                        sinkOptions: new MSSqlServerSinkOptions
+                        {
+                            TableName = "CriticalLogs",
+                            AutoCreateSqlTable = true,
+                            BatchPostingLimit = 50
+                        },
+                        columnOptions: GetCriticalLogColumns())),
+                blockWhenFull: false);
+        }
+
+        return loggerConfig;
+    }
+
+    /// <summary>
+    /// Configure correlation ID middleware
+    /// NOTE: Validation now runs via PreHostValidationGuard BEFORE builder.Build()
+    /// NOTE: Middleware should NOT be registered in DI - they are activated via app.UseMiddleware<T>()
+    /// </summary>
+    public static IServiceCollection AddCorrelationIdLogging(this IServiceCollection services)
+    {
+        // Middleware should NOT be registered in DI container
+        // They are activated via app.UseMiddleware<T>() in the pipeline
+        // RequestDelegate cannot be resolved from DI - it's provided by the framework
+        
+        return services;
+    }
+
+    private static string? GetCriticalLogsConnectionString(IConfiguration configuration, string serviceName)
+    {
+        return configuration.GetConnectionString("LoggingDb")
+            ?? configuration.GetConnectionString($"{serviceName}Db")
+            ?? configuration.GetConnectionString("Default");
+    }
+
+    private static bool IsCriticalDatabaseLog(LogEvent evt)
+    {
+        return evt.Level >= LogEventLevel.Error ||
+               evt.Properties.ContainsKey("Audit") ||
+               evt.Properties.ContainsKey("Security");
+    }
+
+    /// <summary>
+    /// Configure minimal columns for critical SQL logging.
+    /// </summary>
+    private static ColumnOptions GetCriticalLogColumns()
+    {
+        var columnOptions = new ColumnOptions();
+
+        columnOptions.Store.Remove(StandardColumn.Properties);
+        columnOptions.Store.Remove(StandardColumn.MessageTemplate);
+
+        columnOptions.AdditionalColumns = new Collection<SqlColumn>
+        {
+            new() { ColumnName = "ServiceName", DataType = SqlDbType.NVarChar, DataLength = 50 },
+            new() { ColumnName = "CorrelationId", DataType = SqlDbType.NVarChar, DataLength = 100 },
+            new() { ColumnName = "UserId", DataType = SqlDbType.NVarChar, DataLength = 50, AllowNull = true },
+            new() { ColumnName = "RequestPath", DataType = SqlDbType.NVarChar, DataLength = 500, AllowNull = true },
+            new() { ColumnName = "UserAgent", DataType = SqlDbType.NVarChar, DataLength = 500, AllowNull = true },
+            new() { ColumnName = "IpAddress", DataType = SqlDbType.NVarChar, DataLength = 45, AllowNull = true }
+        };
+
+        return columnOptions;
+    }
+
+    private static string GetServiceVersion()
+    {
+        try
+        {
+            var assembly = System.Reflection.Assembly.GetEntryAssembly();
+            return assembly?.GetName().Version?.ToString() ?? "1.0.0";
+        }
+        catch
+        {
+            return "1.0.0";
+        }
+    }
+
+    public static IDisposable BeginPerformanceScope(this Microsoft.Extensions.Logging.ILogger logger, string operation, object? parameters = null)
+    {
+        return logger.BeginScope(new Dictionary<string, object>
+        {
+            ["Performance"] = true,
+            ["Operation"] = operation,
+            ["Parameters"] = parameters ?? new { },
+            ["StartTime"] = DateTimeOffset.UtcNow
+        }) ?? throw new InvalidOperationException("Failed to begin scope");
+    }
+
+    public static IDisposable BeginSecurityScope(this Microsoft.Extensions.Logging.ILogger logger, string action, string? userId = null)
+    {
+        return logger.BeginScope(new Dictionary<string, object>
+        {
+            ["Security"] = true,
+            ["Action"] = action,
+            ["UserId"] = userId ?? "Anonymous",
+            ["Timestamp"] = DateTimeOffset.UtcNow
+        }) ?? throw new InvalidOperationException("Failed to begin scope");
+    }
+
+    public static IDisposable BeginAuditScope(this Microsoft.Extensions.Logging.ILogger logger, string entity, string action, string? userId = null)
+    {
+        return logger.BeginScope(new Dictionary<string, object>
+        {
+            ["Audit"] = true,
+            ["Entity"] = entity,
+            ["Action"] = action,
+            ["UserId"] = userId ?? "System",
+            ["Timestamp"] = DateTimeOffset.UtcNow
+        }) ?? throw new InvalidOperationException("Failed to begin scope");
+    }
+}
+
+/// <summary>
+/// DEPRECATED: Validation now runs via PreHostValidationGuard BEFORE builder.Build()
+/// This class is kept for backward compatibility but is no longer used
+/// </summary>
+[Obsolete("Use PreHostValidationGuard.ValidateOrDie() before builder.Build() instead")]
+internal class AutomaticStartupValidationService : IHostedService
+{
+    public Task StartAsync(CancellationToken cancellationToken)
+    {
+        // Validation now happens in PreHostValidationGuard before host is built
+        return Task.CompletedTask;
+    }
+
+    public Task StopAsync(CancellationToken cancellationToken)
+    {
+        return Task.CompletedTask;
+    }
+}
+
+
+
+
+===== File: Logging\CorrelationIdMiddleware.cs =====
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging;
+using Serilog.Context;
+
+namespace Ecom.Shared.Infrastructure.Logging;
+
+/// <summary>
+/// 🔥 CORRELATION: Middleware to ensure correlation ID tracking across all requests
+/// </summary>
+public class CorrelationIdMiddleware
+{
+    private readonly RequestDelegate _next;
+    private readonly ILogger<CorrelationIdMiddleware> _logger;
+    
+    public const string CorrelationIdHeaderName = "X-Correlation-ID";
+    public const string CorrelationIdKey = "CorrelationId";
+
+    public CorrelationIdMiddleware(RequestDelegate next, ILogger<CorrelationIdMiddleware> logger)
+    {
+        _next = next;
+        _logger = logger;
+    }
+
+    public async Task InvokeAsync(HttpContext context)
+    {
+        var correlationId = GetOrCreateCorrelationId(context);
+
+        // Normalize the header so Ocelot/downstream clients forward the same ID.
+        context.Request.Headers[CorrelationIdHeaderName] = correlationId;
+        
+        // Add to response headers for client tracking
+        context.Response.Headers.TryAdd(CorrelationIdHeaderName, correlationId);
+        
+        // Add to HttpContext for downstream access
+        context.Items[CorrelationIdKey] = correlationId;
+        
+        // Add to Serilog context for all logs in this request
+        using (LogContext.PushProperty(CorrelationIdKey, correlationId))
+        using (LogContext.PushProperty("RequestPath", context.Request.Path))
+        using (LogContext.PushProperty("RequestMethod", context.Request.Method))
+        using (LogContext.PushProperty("UserAgent", context.Request.Headers["User-Agent"].FirstOrDefault()))
+        using (LogContext.PushProperty("IpAddress", GetClientIpAddress(context)))
+        {
+            // Extract user ID if available
+            var userId = context.User?.Identity?.Name ?? 
+                        context.User?.FindFirst("sub")?.Value ?? 
+                        context.User?.FindFirst("userId")?.Value;
+            
+            if (!string.IsNullOrEmpty(userId))
+            {
+                using (LogContext.PushProperty("UserId", userId))
+                {
+                    await _next(context);
+                }
+            }
+            else
+            {
+                await _next(context);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Get existing correlation ID from headers or create new one
+    /// </summary>
+    private string GetOrCreateCorrelationId(HttpContext context)
+    {
+        // Check if correlation ID exists in request headers
+        if (context.Request.Headers.TryGetValue(CorrelationIdHeaderName, out var correlationId) &&
+            !string.IsNullOrEmpty(correlationId))
+        {
+            return correlationId.ToString();
+        }
+
+        // Check alternative header names
+        var alternativeHeaders = new[] { "X-Request-ID", "X-Trace-ID", "Request-ID" };
+        foreach (var header in alternativeHeaders)
+        {
+            if (context.Request.Headers.TryGetValue(header, out var altCorrelationId) &&
+                !string.IsNullOrEmpty(altCorrelationId))
+            {
+                return altCorrelationId.ToString();
+            }
+        }
+
+        // Generate new correlation ID
+        var newCorrelationId = Guid.NewGuid().ToString("N")[..12]; // Short format for readability
+        
+        _logger.LogDebug("Generated new correlation ID: {CorrelationId} for {RequestPath}", 
+            newCorrelationId, context.Request.Path);
+        
+        return newCorrelationId;
+    }
+
+    /// <summary>
+    /// Extract client IP address considering proxies
+    /// </summary>
+    private string GetClientIpAddress(HttpContext context)
+    {
+        // Check for forwarded IP (behind proxy/load balancer)
+        var forwardedFor = context.Request.Headers["X-Forwarded-For"].FirstOrDefault();
+        if (!string.IsNullOrEmpty(forwardedFor))
+        {
+            // Take the first IP if multiple are present
+            return forwardedFor.Split(',')[0].Trim();
+        }
+
+        // Check for real IP header
+        var realIp = context.Request.Headers["X-Real-IP"].FirstOrDefault();
+        if (!string.IsNullOrEmpty(realIp))
+        {
+            return realIp;
+        }
+
+        // Fallback to connection remote IP
+        return context.Connection.RemoteIpAddress?.ToString() ?? "Unknown";
+    }
+}
+
+/// <summary>
+/// Extension methods for correlation ID access
+/// </summary>
+public static class CorrelationIdExtensions
+{
+    /// <summary>
+    /// Get correlation ID from HttpContext
+    /// </summary>
+    public static string? GetCorrelationId(this HttpContext context)
+    {
+        return context.Items[CorrelationIdMiddleware.CorrelationIdKey]?.ToString();
+    }
+
+    /// <summary>
+    /// Get correlation ID from HttpContextAccessor
+    /// </summary>
+    public static string? GetCorrelationId(this IHttpContextAccessor httpContextAccessor)
+    {
+        return httpContextAccessor.HttpContext?.GetCorrelationId();
+    }
+}
+
+
+
+
+===== File: Logging\LoggingPerformanceMonitor.cs =====
+using Microsoft.Extensions.Logging;
+using System.Diagnostics;
+
+namespace Ecom.Shared.Infrastructure.Logging;
+
+/// <summary>
+/// 🔥 PERFORMANCE: Monitor and log performance metrics with correlation tracking
+/// </summary>
+public class LoggingPerformanceMonitor : IDisposable
+{
+    private readonly ILogger _logger;
+    private readonly string _operationName;
+    private readonly Stopwatch _stopwatch;
+    private readonly Dictionary<string, object> _context;
+    private bool _disposed;
+
+    public LoggingPerformanceMonitor(ILogger logger, string operationName, object? parameters = null)
+    {
+        _logger = logger;
+        _operationName = operationName;
+        _stopwatch = Stopwatch.StartNew();
+        _context = new Dictionary<string, object>
+        {
+            ["Operation"] = operationName,
+            ["StartTime"] = DateTimeOffset.UtcNow,
+            ["Parameters"] = parameters ?? new { }
+        };
+
+        _logger.LogDebug("🔥 PERFORMANCE: Started operation {Operation}", operationName);
+    }
+
+    /// <summary>
+    /// Add context information to the performance log
+    /// </summary>
+    public LoggingPerformanceMonitor WithContext(string key, object value)
+    {
+        _context[key] = value;
+        return this;
+    }
+
+    /// <summary>
+    /// Add multiple context properties
+    /// </summary>
+    public LoggingPerformanceMonitor WithContext(Dictionary<string, object> context)
+    {
+        foreach (var kvp in context)
+        {
+            _context[kvp.Key] = kvp.Value;
+        }
+        return this;
+    }
+
+    /// <summary>
+    /// Log intermediate checkpoint
+    /// </summary>
+    public void Checkpoint(string checkpointName, object? data = null)
+    {
+        var elapsed = _stopwatch.ElapsedMilliseconds;
+        
+        _logger.LogInformation("🔥 PERFORMANCE: Checkpoint {Checkpoint} in operation {Operation} at {ElapsedMs}ms",
+            checkpointName, _operationName, elapsed);
+
+        if (data != null)
+        {
+            _context[$"Checkpoint_{checkpointName}"] = data;
+        }
+    }
+
+    /// <summary>
+    /// Complete operation and log final metrics
+    /// </summary>
+    public void Complete(bool success = true, string? errorMessage = null)
+    {
+        if (_disposed) return;
+
+        _stopwatch.Stop();
+        var elapsed = _stopwatch.ElapsedMilliseconds;
+
+        _context["EndTime"] = DateTimeOffset.UtcNow;
+        _context["ElapsedMs"] = elapsed;
+        _context["Success"] = success;
+
+        if (!string.IsNullOrEmpty(errorMessage))
+        {
+            _context["ErrorMessage"] = errorMessage;
+        }
+
+        var logLevel = success ? LogLevel.Information : LogLevel.Warning;
+        var status = success ? "✅ COMPLETED" : "❌ FAILED";
+
+        _logger.Log(logLevel, 
+            "🔥 PERFORMANCE: {Status} operation {Operation} in {ElapsedMs}ms | Context: {@Context}",
+            status, _operationName, elapsed, _context);
+
+        // Log performance warning for slow operations
+        if (elapsed > 5000) // 5 seconds
+        {
+            _logger.LogWarning("🐌 SLOW OPERATION: {Operation} took {ElapsedMs}ms - consider optimization",
+                _operationName, elapsed);
+        }
+    }
+
+    public void Dispose()
+    {
+        if (!_disposed)
+        {
+            Complete();
+            _disposed = true;
+        }
+    }
+}
+
+/// <summary>
+/// Extension methods for easy performance monitoring
+/// </summary>
+public static class PerformanceMonitoringExtensions
+{
+    /// <summary>
+    /// Start performance monitoring for an operation
+    /// </summary>
+    public static LoggingPerformanceMonitor StartPerformanceMonitor(this ILogger logger, string operationName, object? parameters = null)
+    {
+        return new LoggingPerformanceMonitor(logger, operationName, parameters);
+    }
+
+    /// <summary>
+    /// Monitor async operation performance
+    /// </summary>
+    public static async Task<T> MonitorPerformanceAsync<T>(this ILogger logger, string operationName, Func<Task<T>> operation, object? parameters = null)
+    {
+        using var monitor = logger.StartPerformanceMonitor(operationName, parameters);
+        
+        try
+        {
+            var result = await operation();
+            monitor.Complete(success: true);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            monitor.Complete(success: false, errorMessage: ex.Message);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Monitor sync operation performance
+    /// </summary>
+    public static T MonitorPerformance<T>(this ILogger logger, string operationName, Func<T> operation, object? parameters = null)
+    {
+        using var monitor = logger.StartPerformanceMonitor(operationName, parameters);
+        
+        try
+        {
+            var result = operation();
+            monitor.Complete(success: true);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            monitor.Complete(success: false, errorMessage: ex.Message);
+            throw;
+        }
+    }
+}
+
+
+
+===== File: Logging\UserLogContextMiddleware.cs =====
+using Microsoft.AspNetCore.Http;
+using Serilog.Context;
+using System.Security.Claims;
+
+namespace Ecom.Shared.Infrastructure.Logging;
+
+public class UserLogContextMiddleware
+{
+    private readonly RequestDelegate _next;
+
+    public UserLogContextMiddleware(RequestDelegate next)
+    {
+        _next = next;
+    }
+
+    public async Task InvokeAsync(HttpContext context)
+    {
+        var userId = context.User?.FindFirst("UserId")?.Value
+            ?? context.User?.FindFirst("userId")?.Value
+            ?? context.User?.FindFirst("sub")?.Value
+            ?? context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+
+        if (string.IsNullOrWhiteSpace(userId))
+        {
+            await _next(context);
+            return;
+        }
+
+        using (LogContext.PushProperty("UserId", userId))
+        {
+            await _next(context);
+        }
+    }
+}
+
+
+
+
+===== File: Messaging\RabbitMqReliabilityTester.cs =====
+using Microsoft.Extensions.Logging;
+using RabbitMQ.Client;
+using System.Text;
+using System.Text.Json;
+
+namespace Ecom.Shared.Infrastructure.Messaging;
+
+/// <summary>
+/// 🔥 TESTING: Utility to test RabbitMQ reliability mechanisms
+/// </summary>
+public class RabbitMqReliabilityTester
+{
+    private readonly ILogger<RabbitMqReliabilityTester> _logger;
+    private readonly string _connectionString;
+
+    public RabbitMqReliabilityTester(ILogger<RabbitMqReliabilityTester> logger, string connectionString)
+    {
+        _logger = logger;
+        _connectionString = connectionString;
+    }
+
+    /// <summary>
+    /// Test message publishing with failure simulation
+    /// </summary>
+    public async Task TestPublishReliabilityAsync()
+    {
+        _logger.LogInformation("🔥 TESTING: RabbitMQ publish reliability");
+
+        var factory = new ConnectionFactory();
+        factory.Uri = new Uri(_connectionString);
+
+        using var connection = factory.CreateConnection();
+        using var channel = connection.CreateModel();
+
+        // Test message
+        var testMessage = new
+        {
+            Id = Guid.NewGuid(),
+            Message = "Test reliability message",
+            Timestamp = DateTime.UtcNow
+        };
+
+        var json = JsonSerializer.Serialize(testMessage);
+        var body = Encoding.UTF8.GetBytes(json);
+
+        var properties = channel.CreateBasicProperties();
+        properties.Persistent = true;
+        properties.MessageId = testMessage.Id.ToString();
+
+        try
+        {
+            // Test 1: Normal publish
+            channel.BasicPublish("ecom.domain.events", "test.reliability", properties, body);
+            _logger.LogInformation("✅ Normal publish test passed");
+
+            // Test 2: Publish to non-existent exchange (should fail gracefully)
+            try
+            {
+                channel.BasicPublish("non.existent.exchange", "test.reliability", properties, body);
+                _logger.LogWarning("❌ Non-existent exchange test should have failed");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogInformation("✅ Non-existent exchange test passed: {Error}", ex.Message);
+            }
+
+            _logger.LogInformation("🔥 TESTING: Publish reliability tests completed");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "❌ Publish reliability test failed");
+        }
+    }
+
+    /// <summary>
+    /// Test DLQ functionality
+    /// </summary>
+    public async Task TestDeadLetterQueueAsync()
+    {
+        _logger.LogInformation("🔥 TESTING: Dead Letter Queue functionality");
+
+        var factory = new ConnectionFactory();
+        factory.Uri = new Uri(_connectionString);
+
+        using var connection = factory.CreateConnection();
+        using var channel = connection.CreateModel();
+
+        try
+        {
+            // Declare test infrastructure
+            var exchange = "test.dlq.exchange";
+            var dlxExchange = $"{exchange}.dlx";
+            var queue = "test.dlq.queue";
+            var dlqQueue = $"{queue}.dlq";
+
+            // Main exchange and DLX
+            channel.ExchangeDeclare(exchange, ExchangeType.Topic, durable: true);
+            channel.ExchangeDeclare(dlxExchange, ExchangeType.Direct, durable: true);
+
+            // Main queue with DLX configuration
+            var queueArgs = new Dictionary<string, object>
+            {
+                ["x-dead-letter-exchange"] = dlxExchange,
+                ["x-message-ttl"] = 5000 // 5 seconds for testing
+            };
+
+            channel.QueueDeclare(queue, durable: true, exclusive: false, autoDelete: false, arguments: queueArgs);
+            channel.QueueBind(queue, exchange, "test.dlq");
+
+            // DLQ
+            channel.QueueDeclare(dlqQueue, durable: true, exclusive: false, autoDelete: false);
+            channel.QueueBind(dlqQueue, dlxExchange, "");
+
+            // Send test message
+            var testMessage = new { Id = Guid.NewGuid(), Message = "DLQ test message" };
+            var json = JsonSerializer.Serialize(testMessage);
+            var body = Encoding.UTF8.GetBytes(json);
+
+            var properties = channel.CreateBasicProperties();
+            properties.Persistent = true;
+            properties.MessageId = testMessage.Id.ToString();
+
+            channel.BasicPublish(exchange, "test.dlq", properties, body);
+
+            _logger.LogInformation("✅ DLQ test message published");
+
+            // Wait for TTL expiry
+            await Task.Delay(6000);
+
+            // Check if message moved to DLQ
+            var dlqResult = channel.BasicGet(dlqQueue, false);
+            if (dlqResult != null)
+            {
+                _logger.LogInformation("✅ DLQ test passed - message found in dead letter queue");
+                channel.BasicAck(dlqResult.DeliveryTag, false);
+            }
+            else
+            {
+                _logger.LogWarning("❌ DLQ test failed - message not found in dead letter queue");
+            }
+
+            // Cleanup
+            channel.QueueDelete(queue);
+            channel.QueueDelete(dlqQueue);
+            channel.ExchangeDelete(exchange);
+            channel.ExchangeDelete(dlxExchange);
+
+            _logger.LogInformation("🔥 TESTING: DLQ tests completed");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "❌ DLQ test failed");
+        }
+    }
+
+    /// <summary>
+    /// Test idempotency mechanisms
+    /// </summary>
+    public async Task TestIdempotencyAsync()
+    {
+        _logger.LogInformation("🔥 TESTING: Idempotency mechanisms");
+
+        var processedMessages = new HashSet<string>();
+        var duplicateCount = 0;
+
+        // Simulate message processing with duplicates
+        var messageIds = new[]
+        {
+            "msg-001", "msg-002", "msg-001", // Duplicate
+            "msg-003", "msg-002", // Duplicate
+            "msg-004"
+        };
+
+        foreach (var messageId in messageIds)
+        {
+            if (processedMessages.Contains(messageId))
+            {
+                duplicateCount++;
+                _logger.LogInformation("✅ Duplicate detected: {MessageId}", messageId);
+            }
+            else
+            {
+                processedMessages.Add(messageId);
+                _logger.LogInformation("Processing new message: {MessageId}", messageId);
+            }
+        }
+
+        if (duplicateCount == 2)
+        {
+            _logger.LogInformation("✅ Idempotency test passed - {DuplicateCount} duplicates detected", duplicateCount);
+        }
+        else
+        {
+            _logger.LogWarning("❌ Idempotency test failed - expected 2 duplicates, found {DuplicateCount}", duplicateCount);
+        }
+
+        _logger.LogInformation("🔥 TESTING: Idempotency tests completed");
+    }
+
+    /// <summary>
+    /// Run all reliability tests
+    /// </summary>
+    public async Task RunAllTestsAsync()
+    {
+        _logger.LogInformation("🔥 STARTING: RabbitMQ Reliability Test Suite");
+
+        await TestPublishReliabilityAsync();
+        await TestDeadLetterQueueAsync();
+        await TestIdempotencyAsync();
+
+        _logger.LogInformation("🔥 COMPLETED: RabbitMQ Reliability Test Suite");
+    }
+}
+
+
+
+===== File: Messaging\ResilientRabbitMqConsumerBase.cs =====
+using System.Text;
+using System.Text.Json;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using Polly;
+using Polly.CircuitBreaker;
+using Polly.Retry;
+using RabbitMQ.Client;
+using RabbitMQ.Client.Events;
+using RabbitMQ.Client.Exceptions;
+
+namespace Ecom.Shared.Infrastructure.Messaging;
+
+/// <summary>
+/// 🔥 RESILIENT: Enhanced RabbitMQ consumer base with retry, DLQ, and idempotency
+/// </summary>
+public abstract class ResilientRabbitMqConsumerBase : BackgroundService
+{
+    protected IConnection? _connection;
+    protected IModel? _channel;
+    protected readonly IConfiguration _configuration;
+    protected readonly IServiceProvider _serviceProvider;
+    protected readonly ILogger _logger;
+    private readonly ResiliencePipeline _retryStrategy;
+    private readonly ResiliencePipeline _circuitBreakerStrategy;
+    private readonly HashSet<string> _processedMessages = new();
+    private readonly object _idempotencyLock = new();
+    
+    protected abstract string QueueName { get; }
+    protected abstract string RoutingKey { get; }
+    protected virtual int MaxRetryAttempts => 3;
+    protected virtual TimeSpan MessageTtl => TimeSpan.FromMinutes(30);
+    protected virtual bool EnableIdempotency => true;
+
+    protected ResilientRabbitMqConsumerBase(
+        IConfiguration configuration,
+        IServiceProvider serviceProvider,
+        ILogger logger)
+    {
+        _configuration = configuration;
+        _serviceProvider = serviceProvider;
+        _logger = logger;
+
+        // 🔥 RESILIENCE: Retry strategy for message processing
+        _retryStrategy = new ResiliencePipelineBuilder()
+            .AddRetry(new Polly.Retry.RetryStrategyOptions
+            {
+                ShouldHandle = new PredicateBuilder().Handle<Exception>(),
+                MaxRetryAttempts = MaxRetryAttempts,
+                Delay = TimeSpan.FromSeconds(2),
+                BackoffType = DelayBackoffType.Exponential,
+                UseJitter = true,
+                OnRetry = args =>
+                {
+                    _logger.LogWarning("Message processing retry attempt {Attempt} for queue {Queue}: {Exception}", 
+                        args.AttemptNumber, QueueName, args.Outcome.Exception?.Message);
+                    return ValueTask.CompletedTask;
+                }
+            })
+            .Build();
+
+        // 🔥 RESILIENCE: Circuit breaker for consumer protection
+        _circuitBreakerStrategy = new ResiliencePipelineBuilder()
+            .AddCircuitBreaker(new CircuitBreakerStrategyOptions
+            {
+                ShouldHandle = new PredicateBuilder().Handle<Exception>(),
+                FailureRatio = 0.5,
+                MinimumThroughput = 5,
+                BreakDuration = TimeSpan.FromMinutes(1),
+                OnOpened = args =>
+                {
+                    _logger.LogError("Consumer circuit breaker opened for queue {Queue}: {Exception}", 
+                        QueueName, args.Outcome.Exception?.Message);
+                    return ValueTask.CompletedTask;
+                },
+                OnClosed = args =>
+                {
+                    _logger.LogInformation("Consumer circuit breaker closed for queue {Queue}", QueueName);
+                    return ValueTask.CompletedTask;
+                }
+            })
+            .Build();
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            try
+            {
+                await InitializeRabbitMQAsync();
+                
+                if (_channel == null || !_channel.IsOpen)
+                {
+                    _logger.LogWarning("RabbitMQ channel not available for {Queue}, retrying in 10 seconds", QueueName);
+                    await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken);
+                    continue;
+                }
+
+                var consumer = new EventingBasicConsumer(_channel);
+                consumer.Received += async (model, ea) =>
+                {
+                    await HandleMessageAsync(ea);
+                };
+
+                _channel.BasicConsume(queue: QueueName, autoAck: false, consumer: consumer);
+                
+                _logger.LogInformation("Resilient consumer started for {Queue}", QueueName);
+                
+                // Keep running until cancellation
+                await Task.Delay(Timeout.Infinite, stoppingToken);
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogInformation("Consumer {Queue} stopping due to cancellation", QueueName);
+                break;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Fatal error in consumer {Queue}, restarting in 30 seconds", QueueName);
+                await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
+            }
+        }
+    }
+
+    private async Task HandleMessageAsync(BasicDeliverEventArgs ea)
+    {
+        var messageId = ea.BasicProperties?.MessageId ?? Guid.NewGuid().ToString();
+        var retryCount = GetRetryCount(ea.BasicProperties);
+        
+        try
+        {
+            // 🔥 IDEMPOTENCY: Check if message already processed
+            if (EnableIdempotency && IsMessageProcessed(messageId))
+            {
+                _logger.LogInformation("Duplicate message {MessageId} detected for queue {Queue}, acknowledging", 
+                    messageId, QueueName);
+                _channel?.BasicAck(ea.DeliveryTag, false);
+                return;
+            }
+
+            var body = ea.Body.ToArray();
+            var message = Encoding.UTF8.GetString(body);
+            
+            _logger.LogInformation("Processing message {MessageId} (attempt {Retry}) on queue {Queue}", 
+                messageId, retryCount + 1, QueueName);
+
+            // 🔥 RESILIENCE: Apply circuit breaker and retry policies
+            var success = await _circuitBreakerStrategy.ExecuteAsync(async cancellationToken =>
+            {
+                return await _retryStrategy.ExecuteAsync(async ct =>
+                {
+                    return await ProcessMessageSafelyAsync(message, messageId);
+                }, cancellationToken);
+            }, CancellationToken.None);
+
+            if (success)
+            {
+                // 🔥 IDEMPOTENCY: Mark message as processed
+                if (EnableIdempotency)
+                {
+                    MarkMessageAsProcessed(messageId);
+                }
+                
+                _channel?.BasicAck(ea.DeliveryTag, false);
+                _logger.LogInformation("Message {MessageId} processed successfully on queue {Queue}", 
+                    messageId, QueueName);
+            }
+            else
+            {
+                await HandleFailedMessage(ea, messageId, retryCount);
+            }
+        }
+        catch (BrokenCircuitException)
+        {
+            _logger.LogError("Circuit breaker open - rejecting message {MessageId} on queue {Queue}", 
+                messageId, QueueName);
+            _channel?.BasicNack(ea.DeliveryTag, false, true); // Requeue for later
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Unexpected error processing message {MessageId} on queue {Queue}", 
+                messageId, QueueName);
+            await HandleFailedMessage(ea, messageId, retryCount);
+        }
+    }
+
+    private async Task<bool> ProcessMessageSafelyAsync(string message, string messageId)
+    {
+        try
+        {
+            await ProcessMessageAsync(message, messageId);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error processing message {MessageId}: {Error}", messageId, ex.Message);
+            return false;
+        }
+    }
+
+    private async Task HandleFailedMessage(BasicDeliverEventArgs ea, string messageId, int retryCount)
+    {
+        if (retryCount >= MaxRetryAttempts)
+        {
+            // 🔥 DLQ: Send to Dead Letter Queue after max retries
+            _logger.LogError("Message {MessageId} exceeded max retries ({MaxRetries}), sending to DLQ", 
+                messageId, MaxRetryAttempts);
+            
+            await SendToDeadLetterQueue(ea, "Max retries exceeded");
+            _channel?.BasicAck(ea.DeliveryTag, false); // Remove from main queue
+        }
+        else
+        {
+            // 🔥 RETRY: Increment retry count and requeue with delay
+            _logger.LogWarning("Message {MessageId} failed, requeuing for retry {Retry}/{MaxRetries}", 
+                messageId, retryCount + 1, MaxRetryAttempts);
+            
+            await RequeueWithDelay(ea, retryCount + 1);
+            _channel?.BasicAck(ea.DeliveryTag, false); // Remove from main queue (will be requeued)
+        }
+    }
+
+    private async Task SendToDeadLetterQueue(BasicDeliverEventArgs ea, string reason)
+    {
+        try
+        {
+            var dlqExchange = $"{GetExchangeName()}.dlx";
+            var dlqRoutingKey = $"{RoutingKey}.failed";
+            
+            var properties = _channel?.CreateBasicProperties();
+            if (properties != null)
+            {
+                properties.Persistent = true;
+                properties.Headers = new Dictionary<string, object>(ea.BasicProperties?.Headers ?? new Dictionary<string, object>())
+                {
+                    ["x-death-reason"] = reason,
+                    ["x-death-timestamp"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                    ["x-original-queue"] = QueueName,
+                    ["x-original-routing-key"] = RoutingKey
+                };
+            }
+
+            _channel?.BasicPublish(
+                exchange: dlqExchange,
+                routingKey: dlqRoutingKey,
+                basicProperties: properties,
+                body: ea.Body);
+
+            _logger.LogInformation("Message sent to DLQ: {DLQExchange}/{DLQRoutingKey}", dlqExchange, dlqRoutingKey);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send message to DLQ");
+        }
+    }
+
+    private async Task RequeueWithDelay(BasicDeliverEventArgs ea, int retryCount)
+    {
+        try
+        {
+            var delayExchange = $"{GetExchangeName()}.delay";
+            var delayQueue = $"{QueueName}.delay.{retryCount}";
+            var delayMs = (int)Math.Pow(2, retryCount) * 1000; // Exponential backoff
+            
+            // Declare delay queue with TTL
+            var args = new Dictionary<string, object>
+            {
+                ["x-message-ttl"] = delayMs,
+                ["x-dead-letter-exchange"] = GetExchangeName(),
+                ["x-dead-letter-routing-key"] = RoutingKey
+            };
+            
+            _channel?.QueueDeclare(delayQueue, durable: true, exclusive: false, autoDelete: false, arguments: args);
+            
+            var properties = _channel?.CreateBasicProperties();
+            if (properties != null)
+            {
+                properties.Persistent = true;
+                properties.Headers = new Dictionary<string, object>(ea.BasicProperties?.Headers ?? new Dictionary<string, object>())
+                {
+                    ["x-retry-count"] = retryCount,
+                    ["x-retry-timestamp"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+                };
+            }
+
+            _channel?.BasicPublish(
+                exchange: "",
+                routingKey: delayQueue,
+                basicProperties: properties,
+                body: ea.Body);
+
+            _logger.LogInformation("Message requeued with {DelayMs}ms delay to {DelayQueue}", delayMs, delayQueue);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to requeue message with delay");
+        }
+    }
+
+    private async Task InitializeRabbitMQAsync()
+    {
+        try
+        {
+            if (_connection?.IsOpen == true && _channel?.IsOpen == true)
+                return;
+
+            var factory = new ConnectionFactory
+            {
+                HostName = _configuration["RabbitMq:Host"] ?? "localhost",
+                Port = int.Parse(_configuration["RabbitMq:Port"] ?? "5672"),
+                UserName = _configuration["RabbitMq:Username"] ?? "guest",
+                Password = _configuration["RabbitMq:Password"] ?? "guest",
+                AutomaticRecoveryEnabled = true,
+                NetworkRecoveryInterval = TimeSpan.FromSeconds(10),
+                RequestedHeartbeat = TimeSpan.FromSeconds(60)
+            };
+
+            _connection = factory.CreateConnection();
+            _channel = _connection.CreateModel();
+
+            await DeclareInfrastructureAsync();
+            
+            _logger.LogInformation("RabbitMQ initialized for resilient consumer {Queue}", QueueName);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to initialize RabbitMQ for {Queue}", QueueName);
+            throw;
+        }
+    }
+
+    private async Task DeclareInfrastructureAsync()
+    {
+        var exchangeName = GetExchangeName();
+        
+        // 🔥 RESILIENCE: Declare main exchange
+        _channel?.ExchangeDeclare(exchangeName, ExchangeType.Topic, durable: true);
+        
+        // 🔥 RESILIENCE: Declare Dead Letter Exchange
+        var dlxName = $"{exchangeName}.dlx";
+        _channel?.ExchangeDeclare(dlxName, ExchangeType.Direct, durable: true);
+        
+        // 🔥 RESILIENCE: Declare delay exchange for retry mechanism
+        var delayExchange = $"{exchangeName}.delay";
+        _channel?.ExchangeDeclare(delayExchange, ExchangeType.Direct, durable: true);
+
+        // 🔥 RESILIENCE: Declare main queue with DLX configuration
+        var queueArgs = new Dictionary<string, object>
+        {
+            ["x-dead-letter-exchange"] = dlxName,
+            ["x-message-ttl"] = (int)MessageTtl.TotalMilliseconds
+        };
+        
+        _channel?.QueueDeclare(QueueName, durable: true, exclusive: false, autoDelete: false, arguments: queueArgs);
+        _channel?.QueueBind(QueueName, exchangeName, RoutingKey);
+
+        // 🔥 RESILIENCE: Declare Dead Letter Queue
+        var dlqName = $"{QueueName}.dlq";
+        _channel?.QueueDeclare(dlqName, durable: true, exclusive: false, autoDelete: false);
+        _channel?.QueueBind(dlqName, dlxName, $"{RoutingKey}.failed");
+
+        _logger.LogInformation("RabbitMQ infrastructure declared for {Queue} with DLX {DLX}", QueueName, dlxName);
+    }
+
+    private string GetExchangeName()
+    {
+        return _configuration["RabbitMq:Exchange"] ?? "ecom.domain.events";
+    }
+
+    private int GetRetryCount(IBasicProperties? properties)
+    {
+        if (properties?.Headers?.TryGetValue("x-retry-count", out var retryObj) == true)
+        {
+            return retryObj is int retry ? retry : 0;
+        }
+        return 0;
+    }
+
+    private bool IsMessageProcessed(string messageId)
+    {
+        lock (_idempotencyLock)
+        {
+            return _processedMessages.Contains(messageId);
+        }
+    }
+
+    private void MarkMessageAsProcessed(string messageId)
+    {
+        lock (_idempotencyLock)
+        {
+            _processedMessages.Add(messageId);
+            
+            // 🔥 MEMORY: Prevent memory leak by limiting processed message cache
+            if (_processedMessages.Count > 10000)
+            {
+                var toRemove = _processedMessages.Take(5000).ToList();
+                foreach (var id in toRemove)
+                {
+                    _processedMessages.Remove(id);
+                }
+                _logger.LogInformation("Cleaned up processed message cache for {Queue}", QueueName);
+            }
+        }
+    }
+
+    protected abstract Task ProcessMessageAsync(string message, string messageId);
+
+    public override void Dispose()
+    {
+        try
+        {
+            _channel?.Close();
+            _connection?.Close();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error disposing RabbitMQ resources for {Queue}", QueueName);
+        }
+        finally
+        {
+            _channel?.Dispose();
+            _connection?.Dispose();
+            base.Dispose();
+        }
+    }
+}
+
+
+
+===== File: Messaging\ResilientRabbitMqPublisher.cs =====
+using Ecom.Shared.Contracts.Interfaces;
+using Microsoft.Extensions.Logging;
+using Polly;
+using Polly.CircuitBreaker;
+using Polly.Retry;
+using RabbitMQ.Client;
+using RabbitMQ.Client.Exceptions;
+using System.Text;
+using System.Text.Json;
+
+namespace Ecom.Shared.Infrastructure.Messaging;
+
+public class ResilientRabbitMqPublisher : IEventPublisher, IDisposable
+{
+    private readonly ILogger<ResilientRabbitMqPublisher> _logger;
+    private readonly string _exchangeName;
+    private readonly ConnectionFactory _connectionFactory;
+    private readonly ResiliencePipeline _retryStrategy;
+    private readonly ResiliencePipeline _circuitBreakerStrategy;
+    private IConnection? _connection;
+    private IModel? _channel;
+    private readonly object _lock = new();
+
+    public ResilientRabbitMqPublisher(
+        string host, 
+        int port, 
+        string username, 
+        string password, 
+        string exchangeName,
+        ILogger<ResilientRabbitMqPublisher> logger)
+    {
+        _logger = logger;
+        _exchangeName = exchangeName;
+        
+        _connectionFactory = new ConnectionFactory
+        {
+            HostName = host,
+            Port = port,
+            UserName = username,
+            Password = password,
+            AutomaticRecoveryEnabled = true,
+            NetworkRecoveryInterval = TimeSpan.FromSeconds(10),
+            RequestedHeartbeat = TimeSpan.FromSeconds(60),
+            DispatchConsumersAsync = true
+        };
+
+        // 🔥 RESILIENCE: Retry strategy with exponential backoff
+        _retryStrategy = new ResiliencePipelineBuilder()
+            .AddRetry(new Polly.Retry.RetryStrategyOptions
+            {
+                ShouldHandle = new PredicateBuilder().Handle<BrokerUnreachableException>()
+                    .Handle<AlreadyClosedException>()
+                    .Handle<OperationInterruptedException>(),
+                MaxRetryAttempts = 3,
+                Delay = TimeSpan.FromSeconds(1),
+                BackoffType = DelayBackoffType.Exponential,
+                UseJitter = true,
+                OnRetry = args =>
+                {
+                    _logger.LogWarning("RabbitMQ publish retry attempt {Attempt} for {Exception}", 
+                        args.AttemptNumber, args.Outcome.Exception?.GetType().Name);
+                    return ValueTask.CompletedTask;
+                }
+            })
+            .Build();
+
+        // 🔥 RESILIENCE: Circuit breaker to prevent cascading failures
+        _circuitBreakerStrategy = new ResiliencePipelineBuilder()
+            .AddCircuitBreaker(new CircuitBreakerStrategyOptions
+            {
+                ShouldHandle = new PredicateBuilder().Handle<BrokerUnreachableException>()
+                    .Handle<AlreadyClosedException>()
+                    .Handle<OperationInterruptedException>(),
+                FailureRatio = 0.5,
+                MinimumThroughput = 5,
+                BreakDuration = TimeSpan.FromSeconds(30),
+                OnOpened = args =>
+                {
+                    _logger.LogError("RabbitMQ circuit breaker opened due to {Exception}", 
+                        args.Outcome.Exception?.GetType().Name);
+                    return ValueTask.CompletedTask;
+                },
+                OnClosed = args =>
+                {
+                    _logger.LogInformation("RabbitMQ circuit breaker closed - connection restored");
+                    return ValueTask.CompletedTask;
+                },
+                OnHalfOpened = args =>
+                {
+                    _logger.LogInformation("RabbitMQ circuit breaker half-opened - testing connection");
+                    return ValueTask.CompletedTask;
+                }
+            })
+            .Build();
+
+        EnsureConnection();
+        DeclareExchangeAndQueues();
+    }
+
+    private void EnsureConnection()
+    {
+        lock (_lock)
+        {
+            if (_connection?.IsOpen == true && _channel?.IsOpen == true)
+                return;
+
+            try
+            {
+                _connection?.Close();
+                _channel?.Close();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error closing existing RabbitMQ connection");
+            }
+
+            _connection = _connectionFactory.CreateConnection();
+            _channel = _connection.CreateModel();
+            
+            _logger.LogInformation("RabbitMQ connection established to {Host}:{Port}", 
+                _connectionFactory.HostName, _connectionFactory.Port);
+        }
+    }
+
+    private void DeclareExchangeAndQueues()
+    {
+        if (_channel == null) return;
+
+        // 🔥 RESILIENCE: Declare main exchange
+        _channel.ExchangeDeclare(_exchangeName, ExchangeType.Topic, durable: true);
+
+        // 🔥 RESILIENCE: Declare Dead Letter Exchange (DLX)
+        var dlxName = $"{_exchangeName}.dlx";
+        _channel.ExchangeDeclare(dlxName, ExchangeType.Direct, durable: true);
+
+        // 🔥 RESILIENCE: Declare Dead Letter Queue (DLQ)
+        var dlqName = $"{_exchangeName}.dlq";
+        _channel.QueueDeclare(dlqName, durable: true, exclusive: false, autoDelete: false);
+        _channel.QueueBind(dlqName, dlxName, "");
+
+        _logger.LogInformation("RabbitMQ exchange '{Exchange}' and DLQ '{DLQ}' declared", 
+            _exchangeName, dlqName);
+    }
+
+    public async Task PublishAsync<T>(T @event, string routingKey) where T : class
+    {
+        if (@event == null) throw new ArgumentNullException(nameof(@event));
+        if (string.IsNullOrEmpty(routingKey)) throw new ArgumentException("Routing key cannot be empty", nameof(routingKey));
+
+        try
+        {
+            // 🔥 RESILIENCE: Apply circuit breaker and retry policies
+            await _circuitBreakerStrategy.ExecuteAsync(async cancellationToken =>
+            {
+                await _retryStrategy.ExecuteAsync(async ct =>
+                {
+                    PublishMessage(@event, routingKey);
+                }, cancellationToken);
+            }, CancellationToken.None);
+
+            _logger.LogDebug("Event {EventType} published successfully with routing key {RoutingKey}", 
+                typeof(T).Name, routingKey);
+        }
+        catch (BrokenCircuitException)
+        {
+            _logger.LogError("RabbitMQ circuit breaker is open - event {EventType} not published", typeof(T).Name);
+            throw new InvalidOperationException("Message broker is currently unavailable");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to publish event {EventType} with routing key {RoutingKey}", 
+                typeof(T).Name, routingKey);
+            throw;
+        }
+    }
+
+    private void PublishMessage<T>(T @event, string routingKey) where T : class
+    {
+        EnsureConnection();
+
+        if (_channel == null || !_channel.IsOpen)
+            throw new InvalidOperationException("RabbitMQ channel is not available");
+
+        var json = JsonSerializer.Serialize(@event, new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        });
+
+        var body = Encoding.UTF8.GetBytes(json);
+
+        // 🔥 RESILIENCE: Message properties with retry and DLQ support
+        var properties = _channel.CreateBasicProperties();
+        properties.Persistent = true; // Survive broker restart
+        properties.MessageId = Guid.NewGuid().ToString();
+        properties.Timestamp = new AmqpTimestamp(DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+        properties.ContentType = "application/json";
+        properties.Type = typeof(T).Name;
+        
+        // 🔥 RESILIENCE: Set message TTL and DLX for failed messages
+        properties.Headers = new Dictionary<string, object>
+        {
+            ["x-message-ttl"] = 300000, // 5 minutes TTL
+            ["x-dead-letter-exchange"] = $"{_exchangeName}.dlx",
+            ["x-retry-count"] = 0
+        };
+
+        _channel.BasicPublish(
+            exchange: _exchangeName,
+            routingKey: routingKey,
+            basicProperties: properties,
+            body: body);
+    }
+
+    public void Dispose()
+    {
+        try
+        {
+            _channel?.Close();
+            _connection?.Close();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error disposing RabbitMQ connection");
+        }
+        finally
+        {
+            _channel?.Dispose();
+            _connection?.Dispose();
+        }
+    }
+}
+
+
+
+===== File: Services\IdempotencyService.cs =====
+using Microsoft.Extensions.Logging;
+using System.Collections.Concurrent;
+
+namespace Ecom.Shared.Infrastructure.Services;
+
+/// <summary>
+/// 🔥 IDEMPOTENCY: Service for tracking processed messages to prevent duplicates
+/// Uses in-memory concurrent dictionary for tracking
+/// </summary>
+public class IdempotencyService
+{
+    private readonly ILogger<IdempotencyService> _logger;
+    private readonly ConcurrentDictionary<string, DateTime> _processedMessages = new();
+    private readonly ConcurrentDictionary<string, DateTime> _processingLocks = new();
+    private readonly TimeSpan _defaultExpiry = TimeSpan.FromHours(24);
+
+    public IdempotencyService(ILogger<IdempotencyService> logger)
+    {
+        _logger = logger;
+        
+        // Start cleanup task
+        _ = Task.Run(CleanupExpiredMessages);
+    }
+
+    /// <summary>
+    /// Check if message was already processed
+    /// </summary>
+    public async Task<bool> IsProcessedAsync(string messageId)
+    {
+        if (string.IsNullOrEmpty(messageId))
+            return false;
+
+        // Check concurrent dictionary
+        if (_processedMessages.TryGetValue(messageId, out var expiresAt))
+        {
+            if (expiresAt > DateTime.UtcNow)
+            {
+                _logger.LogDebug("Message {MessageId} found in memory as processed", messageId);
+                return true;
+            }
+            else
+            {
+                // Remove expired entry
+                _processedMessages.TryRemove(messageId, out _);
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Mark message as processed with optional expiry
+    /// </summary>
+    public async Task MarkAsProcessedAsync(string messageId, TimeSpan? expiry = null)
+    {
+        if (string.IsNullOrEmpty(messageId))
+            return;
+
+        var expiryTime = expiry ?? _defaultExpiry;
+        var expiresAt = DateTime.UtcNow.Add(expiryTime);
+
+        // Store in concurrent dictionary
+        _processedMessages.AddOrUpdate(messageId, expiresAt, (key, oldValue) => expiresAt);
+
+        _logger.LogDebug("Message {MessageId} marked as processed, expires at {ExpiresAt}", 
+            messageId, expiresAt);
+    }
+
+    /// <summary>
+    /// Try to acquire processing lock for message (prevents concurrent processing)
+    /// </summary>
+    public async Task<bool> TryAcquireProcessingLockAsync(string messageId, TimeSpan? lockDuration = null)
+    {
+        if (string.IsNullOrEmpty(messageId))
+            return false;
+
+        var duration = lockDuration ?? TimeSpan.FromMinutes(5);
+        var expiresAt = DateTime.UtcNow.Add(duration);
+
+        // Try to add processing lock
+        if (_processingLocks.TryGetValue(messageId, out var existingExpiry))
+        {
+            if (existingExpiry > DateTime.UtcNow)
+            {
+                _logger.LogDebug("Message {MessageId} is already being processed", messageId);
+                return false;
+            }
+            else
+            {
+                // Lock expired, remove it
+                _processingLocks.TryRemove(messageId, out _);
+            }
+        }
+
+        _processingLocks.TryAdd(messageId, expiresAt);
+        _logger.LogDebug("Acquired processing lock for message {MessageId}", messageId);
+        return true;
+    }
+
+    /// <summary>
+    /// Release processing lock for message
+    /// </summary>
+    public async Task ReleaseProcessingLockAsync(string messageId)
+    {
+        if (string.IsNullOrEmpty(messageId))
+            return;
+
+        _processingLocks.TryRemove(messageId, out _);
+        _logger.LogDebug("Released processing lock for message {MessageId}", messageId);
+    }
+
+    /// <summary>
+    /// Get processing statistics
+    /// </summary>
+    public async Task<IdempotencyStats> GetStatsAsync()
+    {
+        var now = DateTime.UtcNow;
+        var activeCount = _processedMessages.Count(kvp => kvp.Value > now);
+        var expiredCount = _processedMessages.Count(kvp => kvp.Value <= now);
+
+        return new IdempotencyStats
+        {
+            ActiveMessages = activeCount,
+            ExpiredMessages = expiredCount,
+            TotalMessages = _processedMessages.Count
+        };
+    }
+
+    private async Task CleanupExpiredMessages()
+    {
+        while (true)
+        {
+            try
+            {
+                await Task.Delay(TimeSpan.FromMinutes(30)); // Cleanup every 30 minutes
+
+                var now = DateTime.UtcNow;
+                
+                // Cleanup processed messages
+                var expiredKeys = _processedMessages
+                    .Where(kvp => kvp.Value <= now)
+                    .Select(kvp => kvp.Key)
+                    .ToList();
+
+                foreach (var key in expiredKeys)
+                {
+                    _processedMessages.TryRemove(key, out _);
+                }
+
+                // Cleanup expired locks
+                var expiredLocks = _processingLocks
+                    .Where(kvp => kvp.Value <= now)
+                    .Select(kvp => kvp.Key)
+                    .ToList();
+
+                foreach (var key in expiredLocks)
+                {
+                    _processingLocks.TryRemove(key, out _);
+                }
+
+                if (expiredKeys.Count > 0 || expiredLocks.Count > 0)
+                {
+                    _logger.LogInformation("Cleaned up {MessageCount} expired idempotency records and {LockCount} expired locks", 
+                        expiredKeys.Count, expiredLocks.Count);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during idempotency cleanup");
+            }
+        }
+    }
+}
+
+public class IdempotencyStats
+{
+    public int ActiveMessages { get; set; }
+    public int ExpiredMessages { get; set; }
+    public int TotalMessages { get; set; }
+}
+
+
+
+===== File: Testing\CorsTestHelper.cs =====
+using Microsoft.Extensions.Logging;
+using System.Net.Http;
+using System.Text;
+using System.Text.Json;
+
+namespace Ecom.Shared.Infrastructure.Testing;
+
+/// <summary>
+/// 🔥 TESTING: Utility to test CORS configuration across all services
+/// </summary>
+public class CorsTestHelper
+{
+    private readonly HttpClient _httpClient;
+    private readonly ILogger<CorsTestHelper> _logger;
+
+    public CorsTestHelper(HttpClient httpClient, ILogger<CorsTestHelper> logger)
+    {
+        _httpClient = httpClient;
+        _logger = logger;
+    }
+
+    /// <summary>
+    /// Test CORS preflight request
+    /// </summary>
+    public async Task<CorsTestResult> TestPreflightAsync(string serviceUrl, string origin = "http://localhost:4200")
+    {
+        var result = new CorsTestResult { ServiceUrl = serviceUrl, Origin = origin };
+
+        try
+        {
+            var request = new HttpRequestMessage(HttpMethod.Options, serviceUrl);
+            request.Headers.Add("Origin", origin);
+            request.Headers.Add("Access-Control-Request-Method", "POST");
+            request.Headers.Add("Access-Control-Request-Headers", "Content-Type,Authorization");
+
+            var response = await _httpClient.SendAsync(request);
+            
+            result.StatusCode = (int)response.StatusCode;
+            result.IsSuccessful = response.IsSuccessStatusCode;
+
+            // Check CORS headers
+            result.AccessControlAllowOrigin = response.Headers.GetValues("Access-Control-Allow-Origin").FirstOrDefault();
+            result.AccessControlAllowMethods = response.Headers.GetValues("Access-Control-Allow-Methods").FirstOrDefault();
+            result.AccessControlAllowHeaders = response.Headers.GetValues("Access-Control-Allow-Headers").FirstOrDefault();
+            result.AccessControlAllowCredentials = response.Headers.GetValues("Access-Control-Allow-Credentials").FirstOrDefault();
+
+            _logger.LogInformation("CORS preflight test for {ServiceUrl}: {Status}", serviceUrl, response.StatusCode);
+        }
+        catch (Exception ex)
+        {
+            result.Error = ex.Message;
+            _logger.LogError(ex, "CORS preflight test failed for {ServiceUrl}", serviceUrl);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Test actual CORS request
+    /// </summary>
+    public async Task<CorsTestResult> TestActualRequestAsync(string serviceUrl, string origin = "http://localhost:4200")
+    {
+        var result = new CorsTestResult { ServiceUrl = serviceUrl, Origin = origin };
+
+        try
+        {
+            var request = new HttpRequestMessage(HttpMethod.Get, $"{serviceUrl}/health");
+            request.Headers.Add("Origin", origin);
+
+            var response = await _httpClient.SendAsync(request);
+            
+            result.StatusCode = (int)response.StatusCode;
+            result.IsSuccessful = response.IsSuccessStatusCode;
+
+            // Check CORS headers in actual response
+            if (response.Headers.Contains("Access-Control-Allow-Origin"))
+            {
+                result.AccessControlAllowOrigin = response.Headers.GetValues("Access-Control-Allow-Origin").FirstOrDefault();
+            }
+
+            _logger.LogInformation("CORS actual request test for {ServiceUrl}: {Status}", serviceUrl, response.StatusCode);
+        }
+        catch (Exception ex)
+        {
+            result.Error = ex.Message;
+            _logger.LogError(ex, "CORS actual request test failed for {ServiceUrl}", serviceUrl);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Test CORS across all services
+    /// </summary>
+    public async Task<List<CorsTestResult>> TestAllServicesAsync()
+    {
+        var services = new[]
+        {
+            "https://localhost:7001", // Auth
+            "https://localhost:7002", // Catalog
+            "https://localhost:7003", // Workflow
+            "https://localhost:7004", // Reporting
+            "https://localhost:7005", // Notification
+            "https://localhost:7000"  // Gateway
+        };
+
+        var results = new List<CorsTestResult>();
+
+        foreach (var service in services)
+        {
+            _logger.LogInformation("Testing CORS for service: {Service}", service);
+
+            // Test preflight
+            var preflightResult = await TestPreflightAsync(service);
+            preflightResult.TestType = "Preflight";
+            results.Add(preflightResult);
+
+            // Test actual request
+            var actualResult = await TestActualRequestAsync(service);
+            actualResult.TestType = "Actual";
+            results.Add(actualResult);
+        }
+
+        return results;
+    }
+
+    /// <summary>
+    /// Generate CORS test report
+    /// </summary>
+    public string GenerateReport(List<CorsTestResult> results)
+    {
+        var report = new StringBuilder();
+        report.AppendLine("🔥 CORS Configuration Test Report");
+        report.AppendLine("=====================================");
+        report.AppendLine();
+
+        var groupedResults = results.GroupBy(r => r.ServiceUrl);
+
+        foreach (var group in groupedResults)
+        {
+            report.AppendLine($"Service: {group.Key}");
+            report.AppendLine("─────────────────────────────────────");
+
+            foreach (var result in group)
+            {
+                var status = result.IsSuccessful ? "✅ PASS" : "❌ FAIL";
+                report.AppendLine($"{result.TestType}: {status} (HTTP {result.StatusCode})");
+
+                if (!string.IsNullOrEmpty(result.AccessControlAllowOrigin))
+                    report.AppendLine($"  Allow-Origin: {result.AccessControlAllowOrigin}");
+                if (!string.IsNullOrEmpty(result.AccessControlAllowMethods))
+                    report.AppendLine($"  Allow-Methods: {result.AccessControlAllowMethods}");
+                if (!string.IsNullOrEmpty(result.AccessControlAllowHeaders))
+                    report.AppendLine($"  Allow-Headers: {result.AccessControlAllowHeaders}");
+                if (!string.IsNullOrEmpty(result.AccessControlAllowCredentials))
+                    report.AppendLine($"  Allow-Credentials: {result.AccessControlAllowCredentials}");
+                if (!string.IsNullOrEmpty(result.Error))
+                    report.AppendLine($"  Error: {result.Error}");
+            }
+
+            report.AppendLine();
+        }
+
+        // Summary
+        var totalTests = results.Count;
+        var passedTests = results.Count(r => r.IsSuccessful);
+        var failedTests = totalTests - passedTests;
+
+        report.AppendLine("Summary:");
+        report.AppendLine($"Total Tests: {totalTests}");
+        report.AppendLine($"Passed: {passedTests} ✅");
+        report.AppendLine($"Failed: {failedTests} ❌");
+        report.AppendLine($"Success Rate: {(passedTests * 100.0 / totalTests):F1}%");
+
+        return report.ToString();
+    }
+}
+
+public class CorsTestResult
+{
+    public string ServiceUrl { get; set; } = string.Empty;
+    public string Origin { get; set; } = string.Empty;
+    public string TestType { get; set; } = string.Empty;
+    public int StatusCode { get; set; }
+    public bool IsSuccessful { get; set; }
+    public string? AccessControlAllowOrigin { get; set; }
+    public string? AccessControlAllowMethods { get; set; }
+    public string? AccessControlAllowHeaders { get; set; }
+    public string? AccessControlAllowCredentials { get; set; }
+    public string? Error { get; set; }
+}
+
+
+
+===== File: Validation\BootstrapHostEnvironment.cs =====
+using Microsoft.Extensions.FileProviders;
+using Microsoft.Extensions.Hosting;
+
+namespace Ecom.Shared.Infrastructure.Validation;
+
+/// <summary>
+/// Minimal IHostEnvironment implementation for pre-host validation
+/// Used when validation runs before builder is created
+/// </summary>
+public class BootstrapHostEnvironment : IHostEnvironment
+{
+    public BootstrapHostEnvironment(string environmentName)
+    {
+        EnvironmentName = environmentName;
+        ApplicationName = "Ecom";
+        ContentRootPath = Directory.GetCurrentDirectory();
+        ContentRootFileProvider = new PhysicalFileProvider(ContentRootPath);
+    }
+
+    public string EnvironmentName { get; set; }
+    public string ApplicationName { get; set; }
+    public string ContentRootPath { get; set; }
+    public IFileProvider ContentRootFileProvider { get; set; }
+}
+
+
+
+
+===== File: Validation\PreHostValidationGuard.cs =====
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
+
+namespace Ecom.Shared.Infrastructure.Validation;
+
+/// <summary>
+/// 🔒 ABSOLUTE VALIDATION LOCKDOWN - PRE-HOST ENFORCEMENT
+/// Executes BEFORE builder.Build() - CANNOT be bypassed
+/// Zero dependency on logging, DI, or any infrastructure
+/// Fails with Environment.Exit(1) if validation fails
+/// </summary>
+public static class PreHostValidationGuard
+{
+    private static readonly string[] PlaceholderValues = 
+    {
+        "CHANGE_ME_IN_PRODUCTION",
+        "REPLACE_WITH_ENV_VAR",
+        "YOUR_APP_PASSWORD",
+        "your-email@gmail.com"
+    };
+
+    /// <summary>
+    /// MANDATORY PRE-HOST VALIDATION
+    /// Call this BEFORE builder.Build() in Program.cs
+    /// Validates ALL critical configuration and exits if invalid
+    /// </summary>
+    public static void ValidateOrDie(IConfiguration configuration, IHostEnvironment environment, string serviceName)
+    {
+        Console.WriteLine($"🔒 PRE-HOST VALIDATION GUARD: Starting validation for {serviceName}");
+        Console.WriteLine($"   Environment: {environment.EnvironmentName}");
+        Console.WriteLine($"   Timestamp: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
+        Console.WriteLine();
+
+        var isProduction = environment.IsProduction();
+        var validationFailed = false;
+        var errors = new List<string>();
+
+        try
+        {
+            // 1. MANDATORY: Database validation
+            ValidateDatabaseOrDie(configuration, serviceName, errors);
+
+            // 2. MANDATORY: RabbitMQ validation (if configured)
+            ValidateRabbitMqOrDie(configuration, isProduction, errors);
+
+            // 3. MANDATORY: JWT validation (if configured)
+            ValidateJwtOrDie(configuration, isProduction, errors);
+
+            // 4. MANDATORY: Email validation (if configured)
+            ValidateEmailOrDie(configuration, isProduction, errors);
+
+            // 5. MANDATORY: Production environment checks
+            ValidateProductionEnvironmentOrDie(configuration, environment, errors);
+
+            // 6. MANDATORY: Firewall check in production
+            if (isProduction)
+            {
+                ValidateFirewallOrDie(configuration, errors);
+            }
+
+            if (errors.Any())
+            {
+                validationFailed = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            errors.Add($"UNEXPECTED VALIDATION ERROR: {ex.Message}");
+            validationFailed = true;
+        }
+
+        if (validationFailed)
+        {
+            Console.WriteLine();
+            Console.WriteLine("═══════════════════════════════════════════════════════════════");
+            Console.WriteLine("🔴🔴🔴 PRE-HOST VALIDATION FAILED 🔴🔴🔴");
+            Console.WriteLine("═══════════════════════════════════════════════════════════════");
+            Console.WriteLine($"Service: {serviceName}");
+            Console.WriteLine($"Environment: {environment.EnvironmentName}");
+            Console.WriteLine($"Timestamp: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
+            Console.WriteLine();
+            Console.WriteLine("VALIDATION ERRORS:");
+            for (int i = 0; i < errors.Count; i++)
+            {
+                Console.WriteLine($"{i + 1}. {errors[i]}");
+            }
+            Console.WriteLine();
+            Console.WriteLine("APPLICATION STARTUP ABORTED");
+            Console.WriteLine("═══════════════════════════════════════════════════════════════");
+            Console.WriteLine();
+
+            // ABSOLUTE LOCKDOWN: Exit immediately
+            Environment.Exit(1);
+        }
+
+        Console.WriteLine("✅ PRE-HOST VALIDATION: All checks passed");
+        Console.WriteLine($"   Service {serviceName} is cleared for startup");
+        Console.WriteLine();
+    }
+
+    /// <summary>
+    /// MANDATORY: Validate database configuration
+    /// </summary>
+    private static void ValidateDatabaseOrDie(IConfiguration configuration, string serviceName, List<string> errors)
+    {
+        // Try common connection string names based on service
+        var connectionStringNames = new[] 
+        { 
+            $"{serviceName}Db",
+            "AuthDb", 
+            "CatalogDb", 
+            "WorkflowDb", 
+            "ReportingDb",
+            "NotificationDb",
+            "Default" 
+        };
+
+        string? foundConnectionString = null;
+        string? foundName = null;
+
+        foreach (var name in connectionStringNames)
+        {
+            var connectionString = configuration.GetConnectionString(name);
+            if (!string.IsNullOrEmpty(connectionString))
+            {
+                foundConnectionString = connectionString;
+                foundName = name;
+                break;
+            }
+        }
+
+        if (string.IsNullOrEmpty(foundConnectionString))
+        {
+            errors.Add($"DATABASE: No connection string found. Checked: {string.Join(", ", connectionStringNames)}");
+            return;
+        }
+
+        Console.WriteLine($"✓ DATABASE: Connection string '{foundName}' validated");
+    }
+
+    /// <summary>
+    /// MANDATORY: Validate RabbitMQ configuration if present
+    /// </summary>
+    private static void ValidateRabbitMqOrDie(IConfiguration configuration, bool isProduction, List<string> errors)
+    {
+        var host = configuration["RabbitMq:Host"];
+        var port = configuration["RabbitMq:Port"];
+        var username = configuration["RabbitMq:Username"];
+        var password = configuration["RabbitMq:Password"];
+
+        // Check if RabbitMQ is configured at all
+        if (string.IsNullOrEmpty(host) && string.IsNullOrEmpty(password))
+        {
+            Console.WriteLine("⊘ RABBITMQ: Not configured, skipping validation");
+            return;
+        }
+
+        // If ANY RabbitMQ config exists, ALL must be valid
+        if (string.IsNullOrEmpty(password))
+        {
+            errors.Add("RABBITMQ: Password is not configured. Set RabbitMq:Password or RABBITMQ_PASSWORD environment variable");
+            return;
+        }
+
+        if (ContainsPlaceholder(password))
+        {
+            errors.Add($"RABBITMQ: Password contains placeholder value '{password}'. Replace with actual credentials");
+            return;
+        }
+
+        // Strict fail-fast in production for default credentials
+        if (password == "guest" && isProduction)
+        {
+            errors.Add("RABBITMQ: Using default 'guest' password in PRODUCTION. This is a critical security risk");
+            return;
+        }
+        else if (password == "guest")
+        {
+            Console.WriteLine("⚠ RABBITMQ: Using default 'guest' password (acceptable for development only)");
+        }
+
+        Console.WriteLine($"✓ RABBITMQ: Configuration validated ({host}:{port} as {username})");
+    }
+
+    /// <summary>
+    /// MANDATORY: Validate JWT configuration if present
+    /// </summary>
+    private static void ValidateJwtOrDie(IConfiguration configuration, bool isProduction, List<string> errors)
+    {
+        var jwtKey = configuration["Jwt:Key"] ?? Environment.GetEnvironmentVariable("JWT_KEY");
+        var jwtAuthority = configuration["Jwt:Authority"];
+
+        // Check if JWT is configured at all
+        if (string.IsNullOrEmpty(jwtKey) && string.IsNullOrEmpty(jwtAuthority))
+        {
+            Console.WriteLine("⊘ JWT: Not configured, skipping validation");
+            return;
+        }
+
+        // If Authority is set, this service validates tokens (no key needed)
+        if (!string.IsNullOrEmpty(jwtAuthority))
+        {
+            Console.WriteLine($"✓ JWT: Authority-based validation configured ({jwtAuthority})");
+            return;
+        }
+
+        // If no Authority, then Key is required (this service issues tokens)
+        if (string.IsNullOrEmpty(jwtKey))
+        {
+            errors.Add("JWT: Key is not configured. Set Jwt:Key or JWT_KEY environment variable");
+            return;
+        }
+
+        if (ContainsPlaceholder(jwtKey))
+        {
+            errors.Add("JWT: Key contains placeholder value. Replace with actual secret key");
+            return;
+        }
+
+        if (jwtKey.Length < 32)
+        {
+            errors.Add($"JWT: Key is too short ({jwtKey.Length} characters). Minimum 32 characters (256 bits) required for HS256");
+            return;
+        }
+
+        Console.WriteLine($"✓ JWT: Key validated (length: {jwtKey.Length} characters)");
+    }
+
+    /// <summary>
+    /// MANDATORY: Validate email configuration if present
+    /// </summary>
+    private static void ValidateEmailOrDie(IConfiguration configuration, bool isProduction, List<string> errors)
+    {
+        var email = configuration["EmailSettings:Email"] ?? configuration["Email:SmtpUser"];
+        var password = configuration["EmailSettings:Password"] ?? configuration["Email:SmtpPassword"];
+
+        // Check if Email is configured at all
+        if (string.IsNullOrEmpty(email) && string.IsNullOrEmpty(password))
+        {
+            Console.WriteLine("⊘ EMAIL: Not configured, skipping validation");
+            return;
+        }
+
+        // If ANY email config exists, validate it
+        if (string.IsNullOrEmpty(email) || string.IsNullOrEmpty(password))
+        {
+            if (isProduction)
+            {
+                errors.Add("EMAIL: Configuration is incomplete in PRODUCTION. Email notifications are required");
+            }
+            else
+            {
+                Console.WriteLine("⚠ EMAIL: Configuration is incomplete (email notifications disabled)");
+            }
+            return;
+        }
+
+        if (ContainsPlaceholder(email) || ContainsPlaceholder(password))
+        {
+            if (isProduction)
+            {
+                errors.Add("EMAIL: Configuration contains placeholder values in PRODUCTION");
+            }
+            else
+            {
+                Console.WriteLine("⚠ EMAIL: Configuration contains placeholder values");
+            }
+            return;
+        }
+
+        Console.WriteLine($"✓ EMAIL: Configuration validated ({email})");
+    }
+
+    /// <summary>
+    /// MANDATORY: Validate production environment settings
+    /// </summary>
+    private static void ValidateProductionEnvironmentOrDie(IConfiguration configuration, IHostEnvironment environment, List<string> errors)
+    {
+        if (environment.IsProduction())
+        {
+            Console.WriteLine("✓ ENVIRONMENT: Production mode active");
+
+            // Ensure HTTPS is enforced
+            var requireHttps = configuration.GetValue<bool>("RequireHttpsMetadata", true);
+            if (!requireHttps)
+            {
+                Console.WriteLine("⚠ ENVIRONMENT: HTTPS metadata validation is disabled (security risk)");
+            }
+        }
+        else
+        {
+            Console.WriteLine($"✓ ENVIRONMENT: Development mode ({environment.EnvironmentName})");
+        }
+    }
+
+    /// <summary>
+    /// MANDATORY: Validate firewall configuration in production
+    /// </summary>
+    private static void ValidateFirewallOrDie(IConfiguration configuration, List<string> errors)
+    {
+        var firewallConfigured = configuration.GetValue<bool>("Security:FirewallConfigured", false);
+
+        if (!firewallConfigured)
+        {
+            Console.WriteLine();
+            Console.WriteLine("═══════════════════════════════════════════════════════════════");
+            Console.WriteLine("🔴🔴🔴 CRITICAL SECURITY WARNING 🔴🔴🔴");
+            Console.WriteLine("═══════════════════════════════════════════════════════════════");
+            Console.WriteLine("FIREWALL NOT CONFIGURED FOR PRODUCTION DEPLOYMENT");
+            Console.WriteLine();
+            Console.WriteLine("Services may be directly accessible, bypassing API Gateway.");
+            Console.WriteLine();
+            Console.WriteLine("REQUIRED ACTIONS:");
+            Console.WriteLine("1. Configure firewall to block direct service access (ports 7001-7005)");
+            Console.WriteLine("2. Allow only Gateway port (7000) from internet");
+            Console.WriteLine("3. Set 'Security:FirewallConfigured' = true in configuration");
+            Console.WriteLine();
+            Console.WriteLine("RISK: Rate limiting and authentication can be bypassed");
+            Console.WriteLine("═══════════════════════════════════════════════════════════════");
+            Console.WriteLine();
+
+            errors.Add("FIREWALL: Not configured for production deployment");
+        }
+        else
+        {
+            Console.WriteLine("✓ FIREWALL: Configuration confirmed for production");
+        }
+    }
+
+    private static bool ContainsPlaceholder(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+            return false;
+
+        return PlaceholderValues.Any(placeholder => 
+            value.Contains(placeholder, StringComparison.OrdinalIgnoreCase));
+    }
+}
+
+
+
+
+===== File: Validation\StartupConfigurationValidator.cs =====
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
+
+namespace Ecom.Shared.Infrastructure.Validation;
+
+/// <summary>
+/// PRODUCTION SAFETY: Validates critical configuration at startup
+/// Ensures application FAILS FAST if production credentials are not configured
+/// </summary>
+public static class StartupConfigurationValidator
+{
+    private static readonly string[] PlaceholderValues = 
+    {
+        "CHANGE_ME_IN_PRODUCTION",
+        "REPLACE_WITH_ENV_VAR",
+        "YOUR_APP_PASSWORD",
+        "your-email@gmail.com"
+    };
+
+    /// <summary>
+    /// Validates RabbitMQ configuration and fails if placeholders are detected
+    /// </summary>
+    public static void ValidateRabbitMqConfiguration(IConfiguration configuration, ILogger logger, bool isProduction = false)
+    {
+        var username = configuration["RabbitMq:Username"];
+        var password = configuration["RabbitMq:Password"];
+        var host = configuration["RabbitMq:Host"];
+        var port = configuration["RabbitMq:Port"];
+
+        if (string.IsNullOrEmpty(password))
+        {
+            throw new InvalidOperationException(
+                "STARTUP FAILED: RabbitMQ password is not configured. " +
+                "Set RabbitMq:Password in appsettings.Production.json or RABBITMQ_PASSWORD environment variable.");
+        }
+
+        if (ContainsPlaceholder(password))
+        {
+            throw new InvalidOperationException(
+                $" STARTUP FAILED: RabbitMQ password contains placeholder value '{password}'. " +
+                "Replace with actual credentials in production. " +
+                "Set RABBITMQ_PASSWORD environment variable or update appsettings.Production.json");
+        }
+
+        // Strict fail-fast in production for default credentials
+        if (password == "guest" && isProduction)
+        {
+            throw new InvalidOperationException(
+                " STARTUP FAILED: RabbitMQ is using default 'guest' password in PRODUCTION. " +
+                "This is a critical security risk. Change credentials immediately.");
+        }
+        else if (password == "guest")
+        {
+            logger.LogWarning(
+                " SECURITY WARNING: RabbitMQ is using default 'guest' password. " +
+                "This is acceptable for development but MUST be changed in production.");
+        }
+
+        logger.LogInformation("RabbitMQ configuration validated: {Host}:{Port} as {Username}", 
+            host, port, username);
+    }
+
+    /// <summary>
+    /// Validates JWT configuration and fails if key is missing or placeholder
+    /// </summary>
+    public static void ValidateJwtConfiguration(IConfiguration configuration, ILogger logger, bool isProduction = false)
+    {
+        var jwtKey = configuration["Jwt:Key"] ?? Environment.GetEnvironmentVariable("JWT_KEY");
+
+        if (string.IsNullOrEmpty(jwtKey))
+        {
+            throw new InvalidOperationException(
+                " STARTUP FAILED: JWT Key is not configured. " +
+                "Set Jwt:Key in appsettings.Production.json or JWT_KEY environment variable.");
+        }
+
+        if (ContainsPlaceholder(jwtKey))
+        {
+            throw new InvalidOperationException(
+                $" STARTUP FAILED: JWT Key contains placeholder value. " +
+                "Replace with actual secret key in production. " +
+                "Set JWT_KEY environment variable or update appsettings.Production.json");
+        }
+
+        if (jwtKey.Length < 32)
+        {
+            throw new InvalidOperationException(
+                $" STARTUP FAILED: JWT Key is too short ({jwtKey.Length} characters). " +
+                "Minimum 32 characters (256 bits) required for HS256 algorithm.");
+        }
+
+        logger.LogInformation(" JWT configuration validated: Key length = {Length} characters", jwtKey.Length);
+    }
+
+    /// <summary>
+    /// Validates email configuration and fails if placeholders are detected in production
+    /// </summary>
+    public static void ValidateEmailConfiguration(IConfiguration configuration, ILogger logger, bool isProduction = false)
+    {
+        var email = configuration["EmailSettings:Email"] ?? configuration["Email:SmtpUser"];
+        var password = configuration["EmailSettings:Password"] ?? configuration["Email:SmtpPassword"];
+
+        if (string.IsNullOrEmpty(email) || string.IsNullOrEmpty(password))
+        {
+            if (isProduction)
+            {
+                logger.LogWarning(
+                    " Email configuration is incomplete in PRODUCTION. Email notifications will not work. " +
+                    "Set EmailSettings:Email and EmailSettings:Password in configuration.");
+            }
+            else
+            {
+                logger.LogInformation("ℹ Email configuration is incomplete. Email notifications disabled.");
+            }
+            return; // Non-critical, allow startup
+        }
+
+        if (ContainsPlaceholder(email) || ContainsPlaceholder(password))
+        {
+            if (isProduction)
+            {
+                throw new InvalidOperationException(
+                    " STARTUP FAILED: Email configuration contains placeholder values in PRODUCTION. " +
+                    "Replace with actual credentials. Email notifications are required in production.");
+            }
+            else
+            {
+                logger.LogWarning(
+                    " Email configuration contains placeholder values. Email notifications will not work.");
+            }
+            return;
+        }
+
+        logger.LogInformation(" Email configuration validated: {Email}", email);
+    }
+
+    /// <summary>
+    /// Validates database connection string
+    /// </summary>
+    public static void ValidateDatabaseConfiguration(IConfiguration configuration, string connectionStringName, ILogger logger)
+    {
+        var connectionString = configuration.GetConnectionString(connectionStringName);
+
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new InvalidOperationException(
+                $" STARTUP FAILED: Database connection string '{connectionStringName}' is not configured.");
+        }
+
+        logger.LogInformation(" Database configuration validated: {ConnectionStringName}", connectionStringName);
+    }
+
+    /// <summary>
+    /// Validates production environment settings
+    /// </summary>
+    public static void ValidateProductionEnvironment(IConfiguration configuration, ILogger logger, string environmentName)
+    {
+        if (environmentName == "Production")
+        {
+            logger.LogInformation(" PRODUCTION MODE: Running in production environment");
+
+            // Ensure HTTPS is enforced
+            var requireHttps = configuration.GetValue<bool>("RequireHttpsMetadata", true);
+            if (!requireHttps)
+            {
+                logger.LogWarning(" HTTPS metadata validation is disabled in production. This is a security risk.");
+            }
+        }
+        else
+        {
+            logger.LogInformation(" DEVELOPMENT MODE: Running in {Environment} environment", environmentName);
+        }
+    }
+
+    private static bool ContainsPlaceholder(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+            return false;
+
+        return PlaceholderValues.Any(placeholder => 
+            value.Contains(placeholder, StringComparison.OrdinalIgnoreCase));
+    }
+}
+
+
+

@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Auth Debug Tool</title>
+    <style>
+        body { font-family: Arial; padding: 20px; background: #f5f5f5; }
+        .container { max-width: 900px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; }
+        .status { padding: 15px; margin: 10px 0; border-radius: 5px; border-left: 4px solid; }
+        .error { background: #ffebee; color: #c62828; border-color: #c62828; }
+        .success { background: #e8f5e9; color: #2e7d32; border-color: #2e7d32; }
+        .warning { background: #fff3e0; color: #ef6c00; border-color: #ef6c00; }
+        .info { background: #e3f2fd; color: #1565c0; border-color: #1565c0; }
+        button { padding: 12px 24px; margin: 5px; cursor: pointer; border: none; border-radius: 4px; font-size: 14px; }
+        .btn-primary { background: #1976d2; color: white; }
+        .btn-danger { background: #d32f2f; color: white; }
+        .btn-success { background: #388e3c; color: white; }
+        pre { background: #f5f5f5; padding: 15px; border-radius: 4px; overflow-x: auto; }
+        h2 { color: #333; margin-top: 30px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔐 Authentication Debug Tool</h1>
+        
+        <div id="status"></div>
+        
+        <h2>Actions:</h2>
+        <button class="btn-primary" onclick="checkAuth()">🔍 Check Auth Status</button>
+        <button class="btn-success" onclick="testLogin()">🔑 Test Login API</button>
+        <button class="btn-success" onclick="testProducts()">📦 Test Products API</button>
+        <button class="btn-danger" onclick="clearAuth()">🗑️ Clear Auth Data</button>
+        
+        <div id="results"></div>
+    </div>
+    
+    <script>
+        const GATEWAY_URL = 'http://localhost:58670';
+        
+        function checkAuth() {
+            const statusDiv = document.getElementById('status');
+            const accessToken = localStorage.getItem('accessToken');
+            const refreshToken = localStorage.getItem('refreshToken');
+            const expiresAt = localStorage.getItem('expiresAt');
+            const role = localStorage.getItem('role');
+            
+            let html = '<h3>Current Authentication State:</h3>';
+            
+            if (!accessToken) {
+                html += '<div class="status error"><strong>❌ NO ACCESS TOKEN</strong><br>You are NOT logged in.</div>';
+            } else {
+                html += '<div class="status success"><strong>✅ Access Token Found</strong></div>';
+                
+                // Decode token
+                try {
+                    const parts = accessToken.split('.');
+                    const payload = JSON.parse(atob(parts[1]));
+                    html += '<div class="status info"><strong>Token Payload:</strong><pre>' + JSON.stringify(payload, null, 2) + '</pre></div>';
+                    
+                    const exp = new Date(payload.exp * 1000);
+                    const now = new Date();
+                    const isExpired = exp <= now;
+                    
+                    if (isExpired) {
+                        html += '<div class="status error"><strong>❌ TOKEN EXPIRED</strong><br>Expired at: ' + exp.toLocaleString() + '</div>';
+                    } else {
+                        const minutesLeft = Math.floor((exp - now) / 1000 / 60);
+                        html += '<div class="status success"><strong>✅ Token Valid</strong><br>Expires: ' + exp.toLocaleString() + '<br>Time left: ' + minutesLeft + ' minutes</div>';
+                    }
+                } catch (e) {
+                    html += '<div class="status error"><strong>❌ Invalid Token Format</strong><br>' + e.message + '</div>';
+                }
+            }
+            
+            if (refreshToken) {
+                html += '<div class="status success"><strong>✅ Refresh Token Found</strong></div>';
+            }
+            
+            if (role) {
+                html += '<div class="status success"><strong>✅ Role:</strong> ' + role + '</div>';
+            }
+            
+            statusDiv.innerHTML = html;
+        }
+        
+        async function testLogin() {
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.innerHTML = '<h3>Testing Login API...</h3>';
+            
+            const email = prompt('Enter email:');
+            const password = prompt('Enter password:');
+            
+            if (!email || !password) {
+                resultsDiv.innerHTML += '<div class="status error">Cancelled</div>';
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${GATEWAY_URL}/gateway/auth/auth/login`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ email, password }),
+                    credentials: 'include'
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    resultsDiv.innerHTML += '<div class="status success"><strong>✅ Login Successful</strong><pre>' + JSON.stringify(data, null, 2) + '</pre></div>';
+                    
+                    if (data.data && data.data.accessToken) {
+                        localStorage.setItem('accessToken', data.data.accessToken);
+                        localStorage.setItem('refreshToken', data.data.refreshToken);
+                        localStorage.setItem('expiresAt', data.data.expiresAt);
+                        localStorage.setItem('role', data.data.role);
+                        resultsDiv.innerHTML += '<div class="status success"><strong>✅ Tokens Stored</strong></div>';
+                        checkAuth();
+                    }
+                } else {
+                    resultsDiv.innerHTML += '<div class="status error"><strong>❌ Login Failed</strong><br>Status: ' + response.status + '<pre>' + JSON.stringify(data, null, 2) + '</pre></div>';
+                }
+            } catch (error) {
+                resultsDiv.innerHTML += '<div class="status error"><strong>❌ Error</strong><br>' + error.message + '</div>';
+            }
+        }
+        
+        async function testProducts() {
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.innerHTML = '<h3>Testing Products API...</h3>';
+            
+            const accessToken = localStorage.getItem('accessToken');
+            
+            if (!accessToken) {
+                resultsDiv.innerHTML += '<div class="status error"><strong>❌ No Token</strong><br>Please log in first.</div>';
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${GATEWAY_URL}/gateway/catalog/products/query?page=1&pageSize=10`, {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': 'Bearer ' + accessToken,
+                        'Content-Type': 'application/json'
+                    },
+                    credentials: 'include'
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    resultsDiv.innerHTML += '<div class="status success"><strong>✅ Products API Success</strong><br>Status: ' + response.status + '<pre>' + JSON.stringify(data, null, 2) + '</pre></div>';
+                } else {
+                    resultsDiv.innerHTML += '<div class="status error"><strong>❌ Products API Failed</strong><br>Status: ' + response.status + '<pre>' + JSON.stringify(data, null, 2) + '</pre></div>';
+                    
+                    if (response.status === 401) {
+                        resultsDiv.innerHTML += '<div class="status warning"><strong>⚠️ 401 Unauthorized</strong><br>Possible causes:<br>1. Token expired<br>2. Invalid token<br>3. Gateway not validating token correctly<br>4. Backend not accepting token</div>';
+                    }
+                }
+            } catch (error) {
+                resultsDiv.innerHTML += '<div class="status error"><strong>❌ Error</strong><br>' + error.message + '</div>';
+            }
+        }
+        
+        function clearAuth() {
+            if (confirm('Clear all auth data?')) {
+                localStorage.clear();
+                sessionStorage.clear();
+                alert('✅ Cleared! Refresh the page.');
+                checkAuth();
+            }
+        }
+        
+        // Auto-check on load
+        window.onload = function() {
+            checkAuth();
+        };
+    </script>
+</body>
+</html>

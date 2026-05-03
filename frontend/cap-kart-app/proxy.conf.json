@@ -1,0 +1,10 @@
+{
+  "/gateway": {
+    "target": "http://localhost:58670",
+    "secure": false,
+    "changeOrigin": false,
+    "logLevel": "debug",
+    "cookieDomainRewrite": "localhost",
+    "cookiePathRewrite": "/"
+  }
+}

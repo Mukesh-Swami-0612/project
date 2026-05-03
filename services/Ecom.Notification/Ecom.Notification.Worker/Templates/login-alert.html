@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+    <div style="background: linear-gradient(135deg, #f44336 0%, #e91e63 100%); padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+        <h1 style="color: white; margin: 0; font-size: 28px;">🔒 Security Alert</h1>
+    </div>
+    
+    <div style="background-color: #ffffff; padding: 30px; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 10px 10px;">
+        <h2 style="color: #FF5722; margin-top: 0;">New Login Detected</h2>
+        
+        <p style="font-size: 16px; margin: 20px 0;">
+            We detected a login to your account from a new location or device.
+        </p>
+        
+        <div style="background-color: #fff3e0; padding: 20px; border-left: 4px solid #ff9800; border-radius: 5px; margin: 25px 0;">
+            <p style="margin: 0 0 15px 0; font-weight: bold; color: #e65100;">Login Details:</p>
+            <table style="width: 100%; border-collapse: collapse;">
+                <tr>
+                    <td style="padding: 8px 0; color: #666; font-size: 14px;"><strong>Time:</strong></td>
+                    <td style="padding: 8px 0; color: #333; font-size: 14px;">{{Time}}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #666; font-size: 14px;"><strong>IP Address:</strong></td>
+                    <td style="padding: 8px 0; color: #333; font-size: 14px;">{{IpAddress}}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #666; font-size: 14px;"><strong>Device:</strong></td>
+                    <td style="padding: 8px 0; color: #333; font-size: 14px;">{{Device}}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #666; font-size: 14px;"><strong>Reason:</strong></td>
+                    <td style="padding: 8px 0; color: #333; font-size: 14px;">{{Reason}}</td>
+                </tr>
+            </table>
+        </div>
+        
+        <div style="background-color: #ffebee; padding: 20px; border-radius: 5px; margin: 25px 0;">
+            <p style="color: #d32f2f; font-weight: bold; margin: 0; font-size: 15px;">
+                ⚠️ If this wasn't you, please secure your account immediately by changing your password.
+            </p>
+        </div>
+        
+        <p style="color: #999; font-size: 13px; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0;">
+            This is an automated security alert. If this was you, you can safely ignore this email.
+        </p>
+        
+        <p style="color: #666; font-size: 14px; margin-top: 20px;">
+            Best regards,<br/>
+            <strong>Security Team</strong>
+        </p>
+    </div>
+    
+    <div style="text-align: center; margin-top: 20px; color: #999; font-size: 12px;">
+        <p>© 2026 Ecom Platform. All rights reserved.</p>
+    </div>
+</body>
+</html>

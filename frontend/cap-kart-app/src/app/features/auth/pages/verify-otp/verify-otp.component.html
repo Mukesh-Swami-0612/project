@@ -1,0 +1,89 @@
+<div class="auth-page">
+
+  <!-- ── LEFT PANEL ─────────────────────────── -->
+  <div class="auth-left">
+    <!-- Background particles -->
+    <div class="particles">
+      @for (i of particleList; track i) {
+        <span class="particle" [attr.data-i]="i"></span>
+      }
+    </div>
+
+    <!-- Grid overlay -->
+    <div class="grid-overlay"></div>
+
+    <div class="left-content">
+      <app-logo class="left-logo" size="auth" alt="CapKart logo"></app-logo>
+
+      <!-- Hero text -->
+      <div class="hero-text">
+        <h1 class="hero-title">
+          Verify Your <span class="accent-word">Code</span>
+        </h1>
+        <p class="hero-sub">
+          Enter the 6-digit code we sent to your email address.
+        </p>
+      </div>
+    </div>
+
+    <!-- Decoration circles -->
+    <div class="deco-circle c1"></div>
+    <div class="deco-circle c2"></div>
+    <div class="deco-circle c3"></div>
+  </div>
+
+  <!-- ── RIGHT PANEL ─────────────────────────── -->
+  <div class="auth-right">
+    <div class="form-card">
+      <div class="form-panel active">
+        <div class="form-header">
+          <button type="button" class="back-btn" (click)="goBack()">
+            <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/>
+            </svg>
+            Back to Forgot Password
+          </button>
+          <h2 class="form-title" style="margin-top: 1.2rem;">Verify Code</h2>
+          <p class="form-subtitle">Enter the 6-digit code sent to {{ email }}</p>
+        </div>
+
+        <form (ngSubmit)="verifyOtp()" novalidate>
+
+          <!-- 6-digit Code -->
+          <div class="field-group">
+            <label class="field-label">6-digit Code</label>
+            <div class="otp-container">
+              <input *ngFor="let box of otpArray; let i = index"
+                     type="text"
+                     maxlength="1"
+                     class="otp-box"
+                     [(ngModel)]="otp[i]"
+                     [name]="'otp-' + i"
+                     (input)="onOtpInput($event, i)"
+                     (keydown)="onKeyDown($event, i)"
+                     [autofocus]="i === 0"
+                     autocomplete="off"
+                     inputmode="numeric"
+                     pattern="[0-9]">
+            </div>
+          </div>
+
+          @if (error) {
+            <div class="alert alert-error"><span class="alert-icon">⚠</span> {{ error }}</div>
+          }
+
+          <button type="submit" class="btn-primary">
+            Verify Code
+          </button>
+
+          <div class="form-footer">
+            Didn't receive the code?
+            <button type="button" class="link-btn" (click)="resendCode()">Resend code</button>
+          </div>
+        </form>
+
+      </div>
+    </div><!-- /.form-card -->
+  </div><!-- /.auth-right -->
+
+</div><!-- /.auth-page -->

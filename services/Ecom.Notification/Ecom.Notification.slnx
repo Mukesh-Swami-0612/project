@@ -1,0 +1,8 @@
+<Solution>
+  <Project Path="Ecom.Notification.API/Ecom.Notification.API.csproj" />
+  <Project Path="Ecom.Notification.Application/Ecom.Notification.Application.csproj" />
+  <Project Path="Ecom.Notification.Domain/Ecom.Notification.Domain.csproj" />
+  <Project Path="Ecom.Notification.Infrastructure/Ecom.Notification.Infrastructure.csproj" />
+  <Project Path="Ecom.Notification.Tests/Ecom.Notification.Tests.csproj" />
+  <Project Path="Ecom.Notification.Worker/Ecom.Notification.Worker.csproj" />
+</Solution>

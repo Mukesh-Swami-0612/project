@@ -1,0 +1,51 @@
+:host {
+  display: inline-flex;
+  line-height: 0;
+}
+
+.logo-shell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--logo-width, 120px);
+  max-width: 100%;
+}
+
+.logo-shell--nav {
+  --logo-width: 132px;
+}
+
+.logo-shell--auth {
+  --logo-width: clamp(160px, 20vw, 230px);
+}
+
+.logo-shell--splash {
+  --logo-width: clamp(210px, 28vw, 300px);
+  filter:
+    drop-shadow(0 18px 34px rgba(0, 0, 0, 0.28))
+    drop-shadow(0 0 30px rgba(57, 181, 74, 0.2));
+}
+
+.logo-image {
+  display: block;
+  width: 100%;
+  height: auto;
+  object-fit: contain;
+}
+
+.logo-fallback {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-display);
+  font-size: clamp(1.5rem, 3vw, 2.5rem);
+  font-weight: 800;
+  line-height: 1;
+}
+
+.logo-fallback span:first-child {
+  color: #0b4ca2;
+}
+
+.logo-fallback span:last-child {
+  color: #39b54a;
+}

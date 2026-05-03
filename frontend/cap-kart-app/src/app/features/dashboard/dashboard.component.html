@@ -1,0 +1,379 @@
+<div class="capkart-dashboard">
+  <!-- Sidebar Navigation -->
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <app-logo class="logo" size="nav" alt="CapKart logo"></app-logo>
+      <span class="portal-label">ENTERPRISE PORTAL</span>
+    </div>
+
+    <nav class="sidebar-nav">
+      <a href="#" class="nav-item active">
+        <span class="material-icons">dashboard</span>
+        <span>Dashboard</span>
+      </a>
+      <a href="#" class="nav-item">
+        <span class="material-icons">inventory_2</span>
+        <span>Products</span>
+      </a>
+      <a href="#" class="nav-item">
+        <span class="material-icons">account_tree</span>
+        <span>Workflow</span>
+      </a>
+      <a href="#" class="nav-item">
+        <span class="material-icons">shopping_bag</span>
+        <span>Inventory</span>
+      </a>
+      <a href="#" class="nav-item">
+        <span class="material-icons">leaderboard</span>
+        <span>Reports</span>
+      </a>
+      <a href="#" class="nav-item">
+        <span class="material-icons">history_edu</span>
+        <span>Audit Logs</span>
+      </a>
+      <a href="#" class="nav-item">
+        <span class="material-icons">settings</span>
+        <span>Settings</span>
+      </a>
+    </nav>
+
+    <div class="sidebar-footer">
+      <button class="add-product-btn">
+        <span class="material-icons">add</span>
+        <span>Add Product</span>
+      </button>
+    </div>
+  </aside>
+
+  <!-- Main Content -->
+  <main class="main-content">
+    <!-- Top Header -->
+    <header class="top-header">
+      <div class="search-section">
+        <div class="search-bar">
+          <span class="material-icons">search</span>
+          <input type="text" placeholder="Search orders, products, or customers...">
+        </div>
+      </div>
+      
+      <div class="header-actions">
+        <button class="icon-btn">
+          <span class="material-icons">notifications</span>
+        </button>
+        <button class="icon-btn">
+          <span class="material-icons">help_outline</span>
+        </button>
+        
+        <div class="user-profile">
+          <div class="user-avatar">{{ userEmail ? userEmail[0].toUpperCase() : 'A' }}</div>
+          <div class="user-info">
+            <span class="user-name">{{ userEmail || 'Alex Thompson' }}</span>
+            <span class="user-role">Inventory Lead</span>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- Dashboard Content -->
+    <div class="dashboard-content">
+      <!-- Page Title -->
+      <div class="page-header">
+        <h1>Catalog Overview</h1>
+        <p>Real-time status of your product lifecycle and warehouse inventory.</p>
+        
+        <div class="header-actions-row">
+          <button class="secondary-btn">
+            <span class="material-icons">file_download</span>
+            Export Report
+          </button>
+          <button class="primary-btn">
+            <span class="material-icons">publish</span>
+            Publish Selected
+          </button>
+        </div>
+      </div>
+
+      <!-- Stats Overview -->
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-header">
+            <span class="material-icons">category</span>
+            <span class="stat-label">ALL</span>
+          </div>
+          <div class="stat-value">12,482</div>
+          <div class="stat-description">TOTAL PRODUCTS</div>
+        </div>
+
+        <div class="stat-card">
+          <div class="stat-header">
+            <span class="material-icons">edit_note</span>
+            <span class="stat-label">NEW</span>
+          </div>
+          <div class="stat-value">438</div>
+          <div class="stat-description">IN DRAFT</div>
+        </div>
+
+        <div class="stat-card">
+          <div class="stat-header">
+            <span class="material-icons">pending_actions</span>
+            <span class="stat-label">URGENT</span>
+          </div>
+          <div class="stat-value">86</div>
+          <div class="stat-description">PENDING APPROVAL</div>
+        </div>
+
+        <div class="stat-card">
+          <div class="stat-header">
+            <span class="material-icons">check_circle</span>
+            <span class="stat-label">LIVE</span>
+          </div>
+          <div class="stat-value">11,842</div>
+          <div class="stat-description">PUBLISHED</div>
+        </div>
+
+        <div class="stat-card alert">
+          <div class="stat-header">
+            <span class="material-icons">warning</span>
+            <span class="stat-label">ALERTS</span>
+          </div>
+          <div class="stat-value">12</div>
+          <div class="stat-description">LOW STOCK</div>
+        </div>
+      </div>
+
+      <!-- Content Grid -->
+      <div class="content-grid">
+        <!-- Publishing Trends Chart -->
+        <div class="chart-card">
+          <div class="card-header">
+            <h3>Publishing Trends</h3>
+            <select class="time-selector">
+              <option>Last 30 Days</option>
+              <option>Last 90 Days</option>
+            </select>
+          </div>
+          <div class="chart-placeholder">
+            <div class="chart-bar" style="height: 60%"></div>
+            <div class="chart-bar" style="height: 80%"></div>
+            <div class="chart-bar" style="height: 45%"></div>
+            <div class="chart-bar" style="height: 100%"></div>
+            <div class="chart-labels">
+              <span>Week 01</span>
+              <span>Week 02</span>
+              <span>Week 03</span>
+              <span>Week 04</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- System Alerts -->
+        <div class="alerts-card">
+          <div class="card-header">
+            <h3>System Alerts</h3>
+            <span class="alert-count">Critical (3)</span>
+          </div>
+          
+          <div class="alerts-list">
+            <div class="alert-item critical">
+              <span class="material-icons">inventory</span>
+              <div class="alert-content">
+                <div class="alert-title">Low Stock: SKU #8821</div>
+                <div class="alert-description">"Premium Leather Jacket" down to 2 units.</div>
+              </div>
+            </div>
+            
+            <div class="alert-item warning">
+              <span class="material-icons">error_outline</span>
+              <div class="alert-content">
+                <div class="alert-title">Missing Metadata</div>
+                <div class="alert-description">14 products in Electronics lack dimensions.</div>
+              </div>
+            </div>
+            
+            <div class="alert-item info">
+              <span class="material-icons">sync_problem</span>
+              <div class="alert-content">
+                <div class="alert-title">API Sync Delayed</div>
+                <div class="alert-description">Walmart integration hub lag: +15ms.</div>
+              </div>
+            </div>
+          </div>
+          
+          <button class="dismiss-btn">Dismiss All Alerts</button>
+        </div>
+      </div>
+
+      <!-- Approval Queue -->
+      <div class="approval-queue">
+        <div class="card-header">
+          <h3>Approval Queue</h3>
+          <div class="table-actions">
+            <button class="icon-btn">
+              <span class="material-icons">filter_list</span>
+            </button>
+            <button class="icon-btn">
+              <span class="material-icons">more_vert</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="table-container">
+          <table class="approval-table">
+            <thead>
+              <tr>
+                <th>Product Name</th>
+                <th>Status</th>
+                <th>Owner</th>
+                <th>Last Updated</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  <div class="product-cell">
+                    <div class="product-image"></div>
+                    <div class="product-info">
+                      <div class="product-name">Ultra-Wide Gaming Monitor 4K</div>
+                      <div class="product-sku">SKU: MON-442-XL</div>
+                    </div>
+                  </div>
+                </td>
+                <td><span class="status-badge review">Review</span></td>
+                <td>Sarah Jenkins</td>
+                <td>2 hours ago</td>
+                <td>
+                  <div class="action-buttons">
+                    <button class="action-btn approve">
+                      <span class="material-icons">check</span>
+                    </button>
+                    <button class="action-btn reject">
+                      <span class="material-icons">close</span>
+                    </button>
+                    <button class="action-btn edit">
+                      <span class="material-icons">edit</span>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+              
+              <tr>
+                <td>
+                  <div class="product-cell">
+                    <div class="product-image"></div>
+                    <div class="product-info">
+                      <div class="product-name">Bluetooth Noise-Cancelling Buds</div>
+                      <div class="product-sku">SKU: EAR-990-WT</div>
+                    </div>
+                  </div>
+                </td>
+                <td><span class="status-badge approved">Approved</span></td>
+                <td>Mark Peterson</td>
+                <td>Yesterday, 4:45 PM</td>
+                <td>
+                  <div class="action-buttons">
+                    <button class="action-btn approve">
+                      <span class="material-icons">check</span>
+                    </button>
+                    <button class="action-btn reject">
+                      <span class="material-icons">close</span>
+                    </button>
+                    <button class="action-btn edit">
+                      <span class="material-icons">edit</span>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+              
+              <tr>
+                <td>
+                  <div class="product-cell">
+                    <div class="product-image"></div>
+                    <div class="product-info">
+                      <div class="product-name">Organic Bamboo Sheet Set</div>
+                      <div class="product-sku">SKU: HOM-112-GR</div>
+                    </div>
+                  </div>
+                </td>
+                <td><span class="status-badge draft">Draft</span></td>
+                <td>Lydia Vance</td>
+                <td>3 days ago</td>
+                <td>
+                  <div class="action-buttons">
+                    <button class="action-btn approve">
+                      <span class="material-icons">check</span>
+                    </button>
+                    <button class="action-btn reject">
+                      <span class="material-icons">close</span>
+                    </button>
+                    <button class="action-btn edit">
+                      <span class="material-icons">edit</span>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="table-footer">
+          <span>Showing 3 of 86 pending approvals</span>
+          <div class="pagination">
+            <button class="page-btn">Previous</button>
+            <button class="page-btn">Next</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Action Cards -->
+      <div class="action-cards">
+        <div class="action-card">
+          <div class="action-icon">
+            <span class="material-icons">add_circle</span>
+          </div>
+          <h4>New Listing</h4>
+          <p>Add a single new product to the catalog including all variations and logistics data.</p>
+          <button class="action-btn-primary">Launch Editor</button>
+        </div>
+
+        <div class="action-card">
+          <div class="action-icon">
+            <span class="material-icons">cloud_upload</span>
+          </div>
+          <h4>Bulk Upload</h4>
+          <p>Import high-volume inventory via CSV or Excel. Supports up to 5,000 rows per batch.</p>
+          <button class="action-btn-primary">Start Import</button>
+        </div>
+
+        <div class="action-card">
+          <div class="action-icon">
+            <span class="material-icons">analytics</span>
+          </div>
+          <h4>Inventory Sync</h4>
+          <p>Force a global refresh of inventory levels across all connected sales channels.</p>
+          <button class="action-btn-primary">Sync Now</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="dashboard-footer">
+      <div class="footer-content">
+        <div class="footer-brand">
+          <span>CapKart</span>
+          <span class="separator">|</span>
+          <span>Admin Portal v4.2.1-Stable</span>
+        </div>
+        <div class="footer-links">
+          <a href="#">Privacy Policy</a>
+          <a href="#">Terms of Service</a>
+          <a href="#">Help Center</a>
+          <a href="#">Contact Us</a>
+        </div>
+        <div class="footer-copyright">
+          © 2024 CapKart E-commerce. All rights reserved.
+        </div>
+      </div>
+    </footer>
+  </main>
+</div>

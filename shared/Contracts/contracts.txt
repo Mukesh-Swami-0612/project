@@ -1,0 +1,453 @@
+﻿
+===== File: Ecom.Shared.Contracts.csproj =====
+
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>
+
+
+
+===== File: bin\Debug\net8.0\Ecom.Shared.Contracts.deps.json =====
+
+{
+  "runtimeTarget": {
+    "name": ".NETCoreApp,Version=v8.0",
+    "signature": ""
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETCoreApp,Version=v8.0": {
+      "Ecom.Shared.Contracts/1.0.0": {
+        "runtime": {
+          "Ecom.Shared.Contracts.dll": {}
+        }
+      }
+    }
+  },
+  "libraries": {
+    "Ecom.Shared.Contracts/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    }
+  }
+}
+
+
+
+===== File: Events\UserActionEvent.cs =====
+
+namespace Ecom.Shared.Contracts.Events;
+
+/// <summary>
+/// Event published when a user performs an action in the Auth service.
+/// Consumed by Reporting service for audit logging.
+/// </summary>
+public class UserActionEvent
+{
+    public Guid EventId { get; init; } = Guid.NewGuid();
+    public string EntityName { get; set; } = "User";
+    public int? EntityId { get; set; }
+    public string Action { get; set; } = string.Empty;
+    public string EventType { get; set; } = string.Empty;
+    public string CorrelationId { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public string? Email { get; set; }
+    public string? AdditionalInfo { get; set; }
+    
+    // 🔍 DISTRIBUTED TRACING: Optional trace context for cross-service correlation
+    // Nullable for backward compatibility with existing events
+    public string? TraceId { get; init; }
+    public string? SpanId { get; init; }
+}
+
+
+
+===== File: Interfaces\IEventPublisher.cs =====
+
+namespace Ecom.Shared.Contracts.Interfaces;
+
+/// <summary>
+/// Interface for publishing events to message broker.
+/// </summary>
+public interface IEventPublisher
+{
+    Task PublishAsync<T>(T @event, string routingKey = "") where T : class;
+}
+
+
+
+===== File: Interfaces\IIdempotentMessageHandler.cs =====
+
+namespace Ecom.Shared.Contracts.Interfaces;
+
+/// <summary>
+/// 🔥 IDEMPOTENCY: Interface for handlers that support idempotent message processing
+/// </summary>
+public interface IIdempotentMessageHandler<T> where T : class
+{
+    /// <summary>
+    /// Process message with idempotency key
+    /// </summary>
+    /// <param name="message">The message to process</param>
+    /// <param name="idempotencyKey">Unique key to ensure idempotent processing</param>
+    /// <returns>True if processed successfully, false if should retry</returns>
+    Task<bool> HandleAsync(T message, string idempotencyKey);
+    
+    /// <summary>
+    /// Check if message was already processed
+    /// </summary>
+    /// <param name="idempotencyKey">Unique key to check</param>
+    /// <returns>True if already processed</returns>
+    Task<bool> IsProcessedAsync(string idempotencyKey);
+}
+
+
+
+===== File: obj\Ecom.Shared.Contracts.csproj.nuget.dgspec.json =====
+
+{
+  "format": 1,
+  "restore": {
+    "E:\\FrontEnd\\new1\\EcommerceProductManagement\\shared\\Contracts\\Ecom.Shared.Contracts.csproj": {}
+  },
+  "projects": {
+    "E:\\FrontEnd\\new1\\EcommerceProductManagement\\shared\\Contracts\\Ecom.Shared.Contracts.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "E:\\FrontEnd\\new1\\EcommerceProductManagement\\shared\\Contracts\\Ecom.Shared.Contracts.csproj",
+        "projectName": "Ecom.Shared.Contracts",
+        "projectPath": "E:\\FrontEnd\\new1\\EcommerceProductManagement\\shared\\Contracts\\Ecom.Shared.Contracts.csproj",
+        "packagesPath": "C:\\Users\\Mukesh\\.nuget\\packages\\",
+        "outputPath": "E:\\FrontEnd\\new1\\EcommerceProductManagement\\shared\\Contracts\\obj\\",
+        "projectStyle": "PackageReference",
+        "fallbackFolders": [
+          "E:\\visualstudio\\Tools\\NuGetPackages"
+        ],
+        "configFilePaths": [
+          "C:\\Users\\Mukesh\\AppData\\Roaming\\NuGet\\NuGet.Config",
+          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.FallbackLocation.config",
+          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
+        ],
+        "originalTargetFrameworks": [
+          "net8.0"
+        ],
+        "sources": {
+          "C:\\Program Files (x86)\\Microsoft SDKs\\NuGetPackages\\": {},
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net8.0": {
+            "targetAlias": "net8.0",
+            "projectReferences": {}
+          }
+        },
+        "warningProperties": {
+          "warnAsError": [
+            "NU1605"
+          ]
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        },
+        "SdkAnalysisLevel": "10.0.200"
+      },
+      "frameworks": {
+        "net8.0": {
+          "targetAlias": "net8.0",
+          "imports": [
+            "net461",
+            "net462",
+            "net47",
+            "net471",
+            "net472",
+            "net48",
+            "net481"
+          ],
+          "assetTargetFallback": true,
+          "warn": true,
+          "frameworkReferences": {
+            "Microsoft.NETCore.App": {
+              "privateAssets": "all"
+            }
+          },
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\10.0.202/PortableRuntimeIdentifierGraph.json"
+        }
+      }
+    }
+  }
+}
+
+
+
+===== File: obj\Ecom.Shared.Contracts.csproj.nuget.g.props =====
+
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<Project ToolsVersion="14.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup Condition=" '$(ExcludeRestorePackageImports)' != 'true' ">
+    <RestoreSuccess Condition=" '$(RestoreSuccess)' == '' ">True</RestoreSuccess>
+    <RestoreTool Condition=" '$(RestoreTool)' == '' ">NuGet</RestoreTool>
+    <ProjectAssetsFile Condition=" '$(ProjectAssetsFile)' == '' ">$(MSBuildThisFileDirectory)project.assets.json</ProjectAssetsFile>
+    <NuGetPackageRoot Condition=" '$(NuGetPackageRoot)' == '' ">$(UserProfile)\.nuget\packages\</NuGetPackageRoot>
+    <NuGetPackageFolders Condition=" '$(NuGetPackageFolders)' == '' ">C:\Users\Mukesh\.nuget\packages\;E:\visualstudio\Tools\NuGetPackages</NuGetPackageFolders>
+    <NuGetProjectStyle Condition=" '$(NuGetProjectStyle)' == '' ">PackageReference</NuGetProjectStyle>
+    <NuGetToolVersion Condition=" '$(NuGetToolVersion)' == '' ">7.0.0</NuGetToolVersion>
+  </PropertyGroup>
+  <ItemGroup Condition=" '$(ExcludeRestorePackageImports)' != 'true' ">
+    <SourceRoot Include="C:\Users\Mukesh\.nuget\packages\" />
+    <SourceRoot Include="E:\visualstudio\Tools\NuGetPackages\" />
+  </ItemGroup>
+</Project>
+
+
+
+===== File: obj\Ecom.Shared.Contracts.csproj.nuget.g.targets =====
+
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<Project ToolsVersion="14.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003" />
+
+
+
+===== File: obj\project.assets.json =====
+
+{
+  "version": 3,
+  "targets": {
+    "net8.0": {}
+  },
+  "libraries": {},
+  "projectFileDependencyGroups": {
+    "net8.0": []
+  },
+  "packageFolders": {
+    "C:\\Users\\Mukesh\\.nuget\\packages\\": {},
+    "E:\\visualstudio\\Tools\\NuGetPackages": {}
+  },
+  "project": {
+    "version": "1.0.0",
+    "restore": {
+      "projectUniqueName": "E:\\FrontEnd\\new1\\EcommerceProductManagement\\shared\\Contracts\\Ecom.Shared.Contracts.csproj",
+      "projectName": "Ecom.Shared.Contracts",
+      "projectPath": "E:\\FrontEnd\\new1\\EcommerceProductManagement\\shared\\Contracts\\Ecom.Shared.Contracts.csproj",
+      "packagesPath": "C:\\Users\\Mukesh\\.nuget\\packages\\",
+      "outputPath": "E:\\FrontEnd\\new1\\EcommerceProductManagement\\shared\\Contracts\\obj\\",
+      "projectStyle": "PackageReference",
+      "fallbackFolders": [
+        "E:\\visualstudio\\Tools\\NuGetPackages"
+      ],
+      "configFilePaths": [
+        "C:\\Users\\Mukesh\\AppData\\Roaming\\NuGet\\NuGet.Config",
+        "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.FallbackLocation.config",
+        "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
+      ],
+      "originalTargetFrameworks": [
+        "net8.0"
+      ],
+      "sources": {
+        "C:\\Program Files (x86)\\Microsoft SDKs\\NuGetPackages\\": {},
+        "https://api.nuget.org/v3/index.json": {}
+      },
+      "frameworks": {
+        "net8.0": {
+          "targetAlias": "net8.0",
+          "projectReferences": {}
+        }
+      },
+      "warningProperties": {
+        "warnAsError": [
+          "NU1605"
+        ]
+      },
+      "restoreAuditProperties": {
+        "enableAudit": "true",
+        "auditLevel": "low",
+        "auditMode": "direct"
+      },
+      "SdkAnalysisLevel": "10.0.200"
+    },
+    "frameworks": {
+      "net8.0": {
+        "targetAlias": "net8.0",
+        "imports": [
+          "net461",
+          "net462",
+          "net47",
+          "net471",
+          "net472",
+          "net48",
+          "net481"
+        ],
+        "assetTargetFallback": true,
+        "warn": true,
+        "frameworkReferences": {
+          "Microsoft.NETCore.App": {
+            "privateAssets": "all"
+          }
+        },
+        "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\10.0.202/PortableRuntimeIdentifierGraph.json"
+      }
+    }
+  }
+}
+
+
+
+===== File: obj\project.nuget.cache =====
+
+{
+  "version": 2,
+  "dgSpecHash": "BR49JWFjFPI=",
+  "success": true,
+  "projectFilePath": "E:\\FrontEnd\\new1\\EcommerceProductManagement\\shared\\Contracts\\Ecom.Shared.Contracts.csproj",
+  "expectedPackageFiles": [],
+  "logs": []
+}
+
+
+
+===== File: obj\Debug\net8.0\.NETCoreApp,Version=v8.0.AssemblyAttributes.cs =====
+
+// <autogenerated />
+using System;
+using System.Reflection;
+[assembly: global::System.Runtime.Versioning.TargetFrameworkAttribute(".NETCoreApp,Version=v8.0", FrameworkDisplayName = ".NET 8.0")]
+
+
+
+===== File: obj\Debug\net8.0\Ecom.Shared.Contracts.AssemblyInfo.cs =====
+
+//------------------------------------------------------------------------------
+// <auto-generated>
+//     This code was generated by a tool.
+//
+//     Changes to this file may cause incorrect behavior and will be lost if
+//     the code is regenerated.
+// </auto-generated>
+//------------------------------------------------------------------------------
+
+using System;
+using System.Reflection;
+
+[assembly: System.Reflection.AssemblyCompanyAttribute("Ecom.Shared.Contracts")]
+[assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
+[assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+0b83a5f9cdaf2f9aa707f3219c356bdd650d03fc")]
+[assembly: System.Reflection.AssemblyProductAttribute("Ecom.Shared.Contracts")]
+[assembly: System.Reflection.AssemblyTitleAttribute("Ecom.Shared.Contracts")]
+[assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
+
+// Generated by the MSBuild WriteCodeFragment class.
+
+
+
+
+===== File: obj\Debug\net8.0\Ecom.Shared.Contracts.AssemblyInfoInputs.cache =====
+
+ef5bfc39d4bb55f616af9f8a1d534ecaa598900f6956e8b8b462065751d88507
+
+
+
+===== File: obj\Debug\net8.0\Ecom.Shared.Contracts.assets.cache =====
+
+PKGA   I?S�$��^�#�k�R*��N=5�i.�ZP.�                                               C:\Users\Mukesh\.nuget\packages\    #E:\visualstudio\Tools\NuGetPackages                                
+
+
+
+===== File: obj\Debug\net8.0\Ecom.Shared.Contracts.csproj.CoreCompileInputs.cache =====
+
+ffaab03fa415a5a9cbf408d52ad388df6f5c73d7c0b9ffcbc8e41b7ce6f61f56
+
+
+
+===== File: obj\Debug\net8.0\Ecom.Shared.Contracts.csproj.FileListAbsolute.txt =====
+
+E:\Structure\2AG\A\front+back\EcommerceProductManagement\EcommerceProductManagement\.build\verify\Debug\net8.0\Ecom.Shared.Contracts.deps.json
+E:\Structure\2AG\A\front+back\EcommerceProductManagement\EcommerceProductManagement\.build\verify\Debug\net8.0\Ecom.Shared.Contracts.dll
+E:\Structure\2AG\A\front+back\EcommerceProductManagement\EcommerceProductManagement\.build\verify\Debug\net8.0\Ecom.Shared.Contracts.pdb
+E:\Structure\2AG\A\front+back\EcommerceProductManagement\EcommerceProductManagement\shared\Contracts\bin\Debug\net8.0\Ecom.Shared.Contracts.deps.json
+E:\Structure\2AG\A\front+back\EcommerceProductManagement\EcommerceProductManagement\shared\Contracts\bin\Debug\net8.0\Ecom.Shared.Contracts.dll
+E:\Structure\2AG\A\front+back\EcommerceProductManagement\EcommerceProductManagement\shared\Contracts\bin\Debug\net8.0\Ecom.Shared.Contracts.pdb
+E:\Structure\2AG\A\front+back\EcommerceProductManagement\EcommerceProductManagement\shared\Contracts\obj\Debug\net8.0\Ecom.Shared.Contracts.GeneratedMSBuildEditorConfig.editorconfig
+E:\Structure\2AG\A\front+back\EcommerceProductManagement\EcommerceProductManagement\shared\Contracts\obj\Debug\net8.0\Ecom.Shared.Contracts.AssemblyInfoInputs.cache
+E:\Structure\2AG\A\front+back\EcommerceProductManagement\EcommerceProductManagement\shared\Contracts\obj\Debug\net8.0\Ecom.Shared.Contracts.AssemblyInfo.cs
+E:\Structure\2AG\A\front+back\EcommerceProductManagement\EcommerceProductManagement\shared\Contracts\obj\Debug\net8.0\Ecom.Shared.Contracts.csproj.CoreCompileInputs.cache
+E:\Structure\2AG\A\front+back\EcommerceProductManagement\EcommerceProductManagement\shared\Contracts\obj\Debug\net8.0\Ecom.Shared.Contracts.sourcelink.json
+E:\Structure\2AG\A\front+back\EcommerceProductManagement\EcommerceProductManagement\shared\Contracts\obj\Debug\net8.0\Ecom.Shared.Contracts.dll
+E:\Structure\2AG\A\front+back\EcommerceProductManagement\EcommerceProductManagement\shared\Contracts\obj\Debug\net8.0\refint\Ecom.Shared.Contracts.dll
+E:\Structure\2AG\A\front+back\EcommerceProductManagement\EcommerceProductManagement\shared\Contracts\obj\Debug\net8.0\Ecom.Shared.Contracts.pdb
+E:\Structure\2AG\A\front+back\EcommerceProductManagement\EcommerceProductManagement\shared\Contracts\obj\Debug\net8.0\ref\Ecom.Shared.Contracts.dll
+E:\FrontEnd\EcommerceProductManagement\shared\Contracts\bin\Debug\net8.0\Ecom.Shared.Contracts.deps.json
+E:\FrontEnd\EcommerceProductManagement\shared\Contracts\bin\Debug\net8.0\Ecom.Shared.Contracts.dll
+E:\FrontEnd\EcommerceProductManagement\shared\Contracts\bin\Debug\net8.0\Ecom.Shared.Contracts.pdb
+E:\FrontEnd\EcommerceProductManagement\shared\Contracts\obj\Debug\net8.0\Ecom.Shared.Contracts.GeneratedMSBuildEditorConfig.editorconfig
+E:\FrontEnd\EcommerceProductManagement\shared\Contracts\obj\Debug\net8.0\Ecom.Shared.Contracts.AssemblyInfoInputs.cache
+E:\FrontEnd\EcommerceProductManagement\shared\Contracts\obj\Debug\net8.0\Ecom.Shared.Contracts.AssemblyInfo.cs
+E:\FrontEnd\EcommerceProductManagement\shared\Contracts\obj\Debug\net8.0\Ecom.Shared.Contracts.csproj.CoreCompileInputs.cache
+E:\FrontEnd\EcommerceProductManagement\shared\Contracts\obj\Debug\net8.0\Ecom.Shared.Contracts.sourcelink.json
+E:\FrontEnd\EcommerceProductManagement\shared\Contracts\obj\Debug\net8.0\Ecom.Shared.Contracts.dll
+E:\FrontEnd\EcommerceProductManagement\shared\Contracts\obj\Debug\net8.0\refint\Ecom.Shared.Contracts.dll
+E:\FrontEnd\EcommerceProductManagement\shared\Contracts\obj\Debug\net8.0\Ecom.Shared.Contracts.pdb
+E:\FrontEnd\EcommerceProductManagement\shared\Contracts\obj\Debug\net8.0\ref\Ecom.Shared.Contracts.dll
+E:\FrontEnd\new1\EcommerceProductManagement\shared\Contracts\bin\Debug\net8.0\Ecom.Shared.Contracts.deps.json
+E:\FrontEnd\new1\EcommerceProductManagement\shared\Contracts\bin\Debug\net8.0\Ecom.Shared.Contracts.dll
+E:\FrontEnd\new1\EcommerceProductManagement\shared\Contracts\bin\Debug\net8.0\Ecom.Shared.Contracts.pdb
+E:\FrontEnd\new1\EcommerceProductManagement\shared\Contracts\obj\Debug\net8.0\Ecom.Shared.Contracts.GeneratedMSBuildEditorConfig.editorconfig
+E:\FrontEnd\new1\EcommerceProductManagement\shared\Contracts\obj\Debug\net8.0\Ecom.Shared.Contracts.AssemblyInfoInputs.cache
+E:\FrontEnd\new1\EcommerceProductManagement\shared\Contracts\obj\Debug\net8.0\Ecom.Shared.Contracts.AssemblyInfo.cs
+E:\FrontEnd\new1\EcommerceProductManagement\shared\Contracts\obj\Debug\net8.0\Ecom.Shared.Contracts.csproj.CoreCompileInputs.cache
+E:\FrontEnd\new1\EcommerceProductManagement\shared\Contracts\obj\Debug\net8.0\Ecom.Shared.Contracts.sourcelink.json
+E:\FrontEnd\new1\EcommerceProductManagement\shared\Contracts\obj\Debug\net8.0\Ecom.Shared.Contracts.dll
+E:\FrontEnd\new1\EcommerceProductManagement\shared\Contracts\obj\Debug\net8.0\refint\Ecom.Shared.Contracts.dll
+E:\FrontEnd\new1\EcommerceProductManagement\shared\Contracts\obj\Debug\net8.0\Ecom.Shared.Contracts.pdb
+E:\FrontEnd\new1\EcommerceProductManagement\shared\Contracts\obj\Debug\net8.0\ref\Ecom.Shared.Contracts.dll
+
+
+
+===== File: obj\Debug\net8.0\Ecom.Shared.Contracts.GeneratedMSBuildEditorConfig.editorconfig =====
+
+is_global = true
+build_property.TargetFramework = net8.0
+build_property.TargetFrameworkIdentifier = .NETCoreApp
+build_property.TargetFrameworkVersion = v8.0
+build_property.TargetPlatformMinVersion = 
+build_property.UsingMicrosoftNETSdkWeb = 
+build_property.ProjectTypeGuids = 
+build_property.InvariantGlobalization = 
+build_property.PlatformNeutralAssembly = 
+build_property.EnforceExtendedAnalyzerRules = 
+build_property._SupportedPlatformList = Linux,macOS,Windows
+build_property.RootNamespace = Ecom.Shared.Contracts
+build_property.ProjectDir = E:\FrontEnd\new1\EcommerceProductManagement\shared\Contracts\
+build_property.EnableComHosting = 
+build_property.EnableGeneratedComInterfaceComImportInterop = 
+build_property.EffectiveAnalysisLevelStyle = 8.0
+build_property.EnableCodeStyleSeverity = 
+
+
+
+===== File: obj\Debug\net8.0\Ecom.Shared.Contracts.GlobalUsings.g.cs =====
+
+// <auto-generated/>
+global using System;
+global using System.Collections.Generic;
+global using System.IO;
+global using System.Linq;
+global using System.Net.Http;
+global using System.Threading;
+global using System.Threading.Tasks;
+
+
+
+===== File: obj\Debug\net8.0\Ecom.Shared.Contracts.sourcelink.json =====
+
+{"documents":{"E:\\FrontEnd\\new1\\EcommerceProductManagement\\*":"https://raw.githubusercontent.com/Mukesh-Swami-0612/CapKart/0b83a5f9cdaf2f9aa707f3219c356bdd650d03fc/*"}}
+
+

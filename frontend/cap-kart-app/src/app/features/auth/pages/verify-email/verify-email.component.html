@@ -1,0 +1,110 @@
+<div class="auth-page">
+
+  <!-- ── LEFT PANEL ─────────────────────────── -->
+  <div class="auth-left">
+    <!-- Background particles -->
+    <div class="particles">
+      @for (i of particleList; track i) {
+        <span class="particle" [attr.data-i]="i"></span>
+      }
+    </div>
+
+    <!-- Grid overlay -->
+    <div class="grid-overlay"></div>
+
+    <div class="left-content">
+      <app-logo class="left-logo" size="auth" alt="CapKart logo"></app-logo>
+
+      <!-- Hero text -->
+      <div class="hero-text">
+        <h1 class="hero-title">
+          Verify Your <span class="accent-word">Email</span>
+        </h1>
+        <p class="hero-sub">
+          Enter the 6-digit verification code we sent to your email address.
+        </p>
+      </div>
+    </div>
+
+    <!-- Decoration circles -->
+    <div class="deco-circle c1"></div>
+    <div class="deco-circle c2"></div>
+    <div class="deco-circle c3"></div>
+  </div>
+
+  <!-- ── RIGHT PANEL ─────────────────────────── -->
+  <div class="auth-right">
+    <div class="form-card">
+      <div class="form-panel active">
+        <div class="form-header">
+          <button type="button" class="back-btn" (click)="goToSignup()">
+            <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/>
+            </svg>
+            Back to Sign Up
+          </button>
+          <h2 class="form-title" style="margin-top: 1.2rem;">Verify Your Email</h2>
+          <p class="form-subtitle">
+            <strong>{{ email }}</strong>
+          </p>
+        </div>
+
+        <form (ngSubmit)="verifyEmail()" novalidate>
+
+          <!-- Email Field (READ ONLY) -->
+          <div class="field-group">
+            <label class="field-label">Email Address</label>
+            <div class="input-wrapper">
+              <input type="email" [(ngModel)]="email" name="email" class="form-input" [disabled]="true"/>
+            </div>
+          </div>
+
+          <!-- Send Code Button (shown first) -->
+          <div *ngIf="!codeSent">
+            <button type="button" class="btn-primary" (click)="sendCode()" [disabled]="loading">
+              @if (loading) { <span class="btn-spinner"></span> }
+              {{ loading ? 'Sending code...' : 'Send Verification Code' }}
+            </button>
+          </div>
+
+          <!-- OTP Input (shown after code sent) -->
+          <div *ngIf="codeSent">
+            <div class="field-group">
+              <label class="field-label">6-digit Code</label>
+              <div class="otp-container">
+                <input *ngFor="let box of otpArray; let i = index"
+                       type="text"
+                       maxlength="1"
+                       class="otp-box"
+                       [(ngModel)]="otp[i]"
+                       [name]="'otp-' + i"
+                       (input)="onOtpInput($event, i)"
+                       (keydown)="onKeyDown($event, i)"
+                       [autofocus]="i === 0"
+                       autocomplete="off"
+                       inputmode="numeric"
+                       pattern="[0-9]">
+              </div>
+            </div>
+
+            @if (error) {
+              <div class="alert alert-error"><span class="alert-icon">⚠</span> {{ error }}</div>
+            }
+
+            <button type="submit" class="btn-primary" [disabled]="loading">
+              @if (loading) { <span class="btn-spinner"></span> }
+              {{ loading ? 'Verifying...' : 'Verify Email' }}
+            </button>
+
+            <div class="form-footer">
+              Didn't receive the code?
+              <button type="button" class="link-btn" (click)="resendCode()" [disabled]="loading">Resend code</button>
+            </div>
+          </div>
+        </form>
+
+      </div>
+    </div><!-- /.form-card -->
+  </div><!-- /.auth-right -->
+
+</div><!-- /.auth-page -->

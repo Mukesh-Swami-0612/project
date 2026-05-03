@@ -1,0 +1,244 @@
+/* ══════════════════════════════════════════════
+   CAPKART — GLOBAL DESIGN SYSTEM (FINAL)
+   Blue → Green Gradient Theme
+   ══════════════════════════════════════════════ */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Manrope:wght@400;500;600;700;800&display=swap');
+
+/* ── Design Tokens ───────────────────────────── */
+:root {
+  /* CapKart Design System - Blue to Green Theme */
+  
+  /* PRIMARY COLORS (Blue → Green) */
+  --primary-blue: #2563eb;
+  --primary-green: #22c55e;
+  --primary-gradient: linear-gradient(90deg, #2563eb, #22c55e);
+  
+  /* SURFACE COLORS */
+  --background: #f8fafc;
+  --surface: #ffffff;
+  --surface-container-lowest: #ffffff;
+  --surface-container-low: #f8fafc;
+  --surface-container: #f1f5f9;
+  --surface-container-high: #e2e8f0;
+  --surface-container-highest: #cbd5e1;
+  
+  /* TEXT COLORS */
+  --text-primary: #1f2937;
+  --text-secondary: #6b7280;
+  --on-surface: #1f2937;
+  --on-surface-variant: #6b7280;
+  
+  /* BORDER COLORS */
+  --border: #e5e7eb;
+  --outline: #9ca3af;
+  --outline-variant: #e5e7eb;
+  
+  /* SIDEBAR COLORS */
+  --sidebar-bg: #1e293b;
+  --sidebar-text: #e2e8f0;
+  --sidebar-active-bg: linear-gradient(90deg, rgba(37, 99, 235, 0.15), transparent);
+  --sidebar-active-indicator: #22c55e;
+  
+  /* ERROR COLORS */
+  --error: #ef4444;
+  --on-error: #ffffff;
+  --error-container: #fee2e2;
+  --on-error-container: #991b1b;
+  
+  /* SUCCESS COLORS */
+  --success: #22c55e;
+  --on-success: #ffffff;
+  
+  /* WARNING COLORS */
+  --warning: #f59e0b;
+  --on-warning: #ffffff;
+  
+  /* Legacy compatibility */
+  --primary: #2563eb;
+  --on-primary: #ffffff;
+  --primary-container: #2563eb;
+  --on-primary-container: #ffffff;
+  --secondary: #22c55e;
+  --on-secondary: #ffffff;
+  --secondary-container: #22c55e;
+  --on-secondary-container: #ffffff;
+  --accent: #2563eb;
+  --accent-2: #22c55e;
+  --accent-dark: #1e40af;
+  --splash-bg: #0f172a;
+  --bg-dark: #0f172a;
+  --input-bg: #f8fafc;
+  --text-dark: #1f2937;
+  --text-muted: #6b7280;
+  --inverse-surface: #1e293b;
+  --inverse-on-surface: #f1f5f9;
+
+  /* Typography */
+  --font-display: 'Manrope', 'Inter', system-ui, sans-serif;
+  --font-body: 'Inter', system-ui, sans-serif;
+
+  /* Spacing */
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 40px;
+  --container-margin: 32px;
+  --gutter: 20px;
+
+  /* Radii */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --radius-2xl: 1.5rem;
+  --radius-full: 9999px;
+}
+
+/* ── Reset ───────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+  overflow-x: hidden;
+}
+
+body {
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--text-dark);
+  background: var(--splash-bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(37, 99, 235, 0.3); border-radius: 100px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(37, 99, 235, 0.5); }
+
+/* ── Typography Utilities ───────────────────── */
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-display);
+  line-height: 1.2;
+}
+
+/* ── Smooth transitions everywhere ─────────── */
+a, button { transition: all 0.2s ease; }
+button { font-family: var(--font-body); }
+
+/* Input global reset */
+input, textarea, select {
+  font-family: var(--font-body);
+  appearance: none;
+}
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0 30px #f8faff inset;
+  -webkit-text-fill-color: var(--text-dark);
+  transition: background-color 5000s ease-in-out 0s;
+}
+
+/* Focus outline */
+:focus-visible {
+  outline: 2px solid var(--primary-blue);
+  outline-offset: 2px;
+}
+
+/* ══════════════════════════════════════════════
+   GLOBAL COMPONENT STYLES (CapKart Theme)
+   ══════════════════════════════════════════════ */
+
+/* ── BUTTONS ───────────────────────────────── */
+.btn-primary {
+  background: linear-gradient(90deg, #2563eb, #22c55e);
+  color: white;
+  border-radius: 10px;
+  padding: 10px 16px;
+  font-weight: 600;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-family: var(--font-body);
+  font-size: 14px;
+}
+
+.btn-primary:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+}
+
+.btn-primary:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.btn-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  background: transparent;
+  color: var(--primary-blue);
+  border: 1.5px solid var(--primary-blue);
+  border-radius: 10px;
+  padding: 10px 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-family: var(--font-body);
+  font-size: 14px;
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: rgba(37, 99, 235, 0.05);
+  transform: translateY(-1px);
+}
+
+/* ── CARDS ─────────────────────────────────── */
+.card, .auth-card {
+  background: white;
+  border-radius: 16px;
+  padding: 24px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05);
+  border: 1px solid var(--border);
+}
+
+/* ── INPUTS ────────────────────────────────── */
+input:not([type="checkbox"]):not([type="radio"]),
+textarea,
+select {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  width: 100%;
+  font-family: var(--font-body);
+  font-size: 14px;
+  color: var(--text-primary);
+  background: var(--surface);
+  transition: all 0.2s ease;
+}
+
+input:focus:not([type="checkbox"]):not([type="radio"]),
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: var(--primary-blue);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
